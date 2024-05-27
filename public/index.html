@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toggl API Example</title>
+    <style>
+        body,
+        html {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #loginBtn {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px;
+            font-size: 1.5em;
+            border: none;
+            cursor: pointer;
+            border-radius: 15px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 1vw;
+            padding: 1vw;
+            width: 100%;
+            height: 95%;
+        }
+        .grid button {
+            font-size: 10vh;
+            border: none;
+            cursor: pointer;
+            border-radius: 15px;
+            width: 32vw;
+            height: 100%;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            color: black;
+            padding: 1em;
+            border-radius: 10px;
+        }
+        .modal input {
+            display: block;
+            margin: 1em 0;
+            padding: 1em;
+            width: 20em;
+        }
+        .modal button {
+            padding: 1em;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="grid">
+        <button style="background-color: #FFC3B6;" onclick="startTask('Sleep')">Sleep</button>
+        <button style="background-color: #FFD8B1;" onclick="startTask('Self-care')">Self-care</button>
+        <button style="background-color: #c9ffe1;" onclick="startTask('Exercise')">Exercise</button>
+        <button style="background-color: #B7F0B1;" onclick="startTask('Alone')">Alone</button>
+        <button style="background-color: #AEDFF3;" onclick="startTask('Family')">Family</button>
+        <button style="background-color: #E6B3E6;" onclick="startTask('Love')">Love</button>
+        <button style="background-color: #FFD6D3;" onclick="startTask('Friends')">Friends</button>
+        <button style="background-color: #feffc3;" onclick="startTask('Work')">Work</button>
+        <button style="background-color: #adadad;" onclick="stopCurrentTask()">Stop</button>
+    </div>
+    <button id="loginBtn">Login</button>
+    <div class="modal" id="loginModal">
+        <input type="text" id="workspaceId" placeholder="Workspace ID">
+        <input type="text" id="apiToken" placeholder="API Token">
+        <button onclick="saveCredentials()">Save</button>
+    </div>
+    <script>
+        let currentTaskId = null;
+        let workspaceId = getCookie('workspaceId') || '';
+        let apiToken = getCookie('apiToken') || '';
+        document.getElementById('workspaceId').value = workspaceId;
+        document.getElementById('apiToken').value = apiToken;
+
+        document.getElementById('loginBtn').addEventListener('click', () => {
+            document.getElementById('loginModal').style.display = 'block';
+        });
+
+        function saveCredentials() {
+            workspaceId = document.getElementById('workspaceId').value;
+            apiToken = document.getElementById('apiToken').value;
+            setCookie('workspaceId', workspaceId, 365);
+            setCookie('apiToken', apiToken, 365);
+            document.getElementById('loginModal').style.display = 'none';
+        }
+
+        async function startTask(taskName) {
+            const response = await fetch('/startTask', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    apiToken,
+                    workspaceId,
+                    taskName
+                })
+            });
+            const data = await response.json();
+            console.log(data);
+            currentTaskId = data.id;
+            updateButtonStyles(taskName);
+        }
+
+        async function stopCurrentTask() {
+            await fetch('/stopTask', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    apiToken,
+                    workspaceId,
+                    taskId: currentTaskId
+                })
+            });
+            currentTaskId = null;
+            updateButtonStyles(null);
+        }
+
+        function updateButtonStyles(activeTask) {
+            const buttons = document.querySelectorAll('.grid button');
+            buttons.forEach(button => {
+                if (button.innerText === activeTask) {
+                    button.style.opacity = '1';
+                } else {
+                    button.style.opacity = '0.5';
+                }
+            });
+        }
+
+        function setCookie(name, value, days) {
+            const d = new Date();
+            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+            const expires = "expires=" + d.toUTCString();
+            document.cookie = name + "=" + value + ";" + expires + ";path=/";
+        }
+
+        function getCookie(name) {
+            const cname = name + "=";
+            const decodedCookie = decodeURIComponent(document.cookie);
+            const ca = decodedCookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') {
+                    c = c.substring(1);
+                }
+                if (c.indexOf(cname) === 0) {
+                    return c.substring(cname.length, c.length);
+                }
+            }
+            return "";
+        }
+    </script>
+</body>
+</html>
