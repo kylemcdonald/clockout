@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Toggl API Example</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Toggl Time Tracker</title>
     <style>
         body,
         html {
@@ -37,7 +39,8 @@
             height: 95%;
         }
         .grid button {
-            font-size: 10vh;
+            color: black;
+            font-size: 7vh;
             border: none;
             cursor: pointer;
             border-radius: 15px;
@@ -64,6 +67,7 @@
         .modal button {
             padding: 1em;
             width: 100%;
+            font-size: 2em;
         }
     </style>
 </head>
@@ -77,7 +81,7 @@
         <button style="background-color: #E6B3E6;" onclick="startTask('Love')">Love</button>
         <button style="background-color: #FFD6D3;" onclick="startTask('Friends')">Friends</button>
         <button style="background-color: #feffc3;" onclick="startTask('Work')">Work</button>
-        <button style="background-color: #adadad;" onclick="stopCurrentTask()">Stop</button>
+        <button style="background-color: #adadad;" onclick="stopCurrentTask()">Break</button>
     </div>
     <button id="loginBtn">Login</button>
     <div class="modal" id="loginModal">
