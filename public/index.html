@@ -9,15 +9,16 @@
     <style>
         body,
         html {
-            height: 100%;
             margin: 0;
-            overflow: hidden;
+            padding: 0;
+            height: 100%;
             display: flex;
             justify-content: center;
             align-items: center;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
             background-color: black;
             color: white;
-            font-family: Arial, sans-serif;
         }
         #loginBtn {
             position: fixed;
@@ -33,19 +34,20 @@
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             grid-template-rows: repeat(3, 1fr);
-            gap: 1vw;
-            padding: 1vw;
-            width: 100%;
-            height: 95%;
+            width: 90vw;
+            height: 90vh;
         }
         .grid button {
             color: black;
-            font-size: 7vh;
+            font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 1em;
             border: none;
-            cursor: pointer;
-            border-radius: 15px;
-            width: 32vw;
-            height: 100%;
+            margin: 2vmin;
+            font-size: calc(10px + 2vmin);
+            text-align: center;
         }
         .modal {
             display: none;
