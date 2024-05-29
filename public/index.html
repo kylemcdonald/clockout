@@ -110,6 +110,28 @@
             document.getElementById('loginModal').style.display = 'none';
         }
 
+        async function getCurrentTask() {
+            const response = await fetch('/getCurrentTask', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    apiToken,
+                    workspaceId
+                })
+            });
+            const data = await response.json();
+            console.log(data);
+            currentTaskId = data.id;
+            updateButtonStyles(data.name);
+        }
+
+        getCurrentTask();
+        setInterval(() => {
+            getCurrentTask();
+        }, 60*1000);
+
         async function startTask(taskName) {
             const response = await fetch('/startTask', {
                 method: 'POST',
