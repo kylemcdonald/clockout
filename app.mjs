@@ -41,6 +41,17 @@ const getProjects = memoize(async (apiToken, workspaceId) => {
     return data;
 })
 
+async function getTimeEntries(apiToken) {
+    const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries`, {
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
+        }
+    });
+    const data = await response.json();
+    return data;
+}
+
 async function getProjectId(apiToken, workspaceId, projectName) {
     const data = await getProjects(apiToken, workspaceId)
     const project = data.find(p => p.name === projectName);
@@ -52,6 +63,16 @@ async function getProjectName(apiToken, workspaceId, projectId) {
     const project = data.find(p => p.id === projectId);
     return project.name;
 }
+
+app.get('/getTimeTotals', async (req, res) => {
+    const { apiToken } = req.body;
+    try {
+        const timeEntries = await getTimeEntries(apiToken);
+        res.json(timeEntries);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    } 
+})
 
 app.post('/getCurrentTask', async (req, res) => {
     const { apiToken, workspaceId } = req.body;
