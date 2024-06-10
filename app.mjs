@@ -42,7 +42,15 @@ const getProjects = memoize(async (apiToken, workspaceId) => {
 })
 
 async function getTimeEntries(apiToken) {
-    const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries`, {
+    // get unix timestamp for this time one week ago
+    const now = new Date();
+    const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    // const since = Math.floor(oneWeekAgo.getTime() / 1000);
+    const start_date = oneWeekAgo.toISOString();
+    const end_date = now.toISOString();
+    
+    const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start_date}&end_date=${end_date}`, {
+        method: 'GET',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
@@ -52,6 +60,30 @@ async function getTimeEntries(apiToken) {
     return data;
 }
 
+function calculateTotalTimes(events) {
+    let totalHours = 0;
+    let projectTimes = {};
+
+    events.forEach(event => {
+        let duration = event.duration;
+        if (duration < 0) {
+            duration += new Date().getTime() / 1000;
+        }
+        let durationHours = duration / 3600;
+        totalHours += durationHours;
+        if (projectTimes[event.project_id]) {
+            projectTimes[event.project_id] += durationHours;
+        } else {
+            projectTimes[event.project_id] = durationHours;
+        }
+    });
+
+    return {
+        total: totalHours,
+        projects: projectTimes
+    };
+}
+
 async function getProjectId(apiToken, workspaceId, projectName) {
     const data = await getProjects(apiToken, workspaceId)
     const project = data.find(p => p.name === projectName);
@@ -59,16 +91,26 @@ async function getProjectId(apiToken, workspaceId, projectName) {
 }
 
 async function getProjectName(apiToken, workspaceId, projectId) {
-    const data = await getProjects(apiToken, workspaceId)
-    const project = data.find(p => p.id === projectId);
+    const data = await getProjects(apiToken, workspaceId);
+    const project = data.find(p => p.id == projectId);
     return project.name;
 }
 
-app.get('/getTimeTotals', async (req, res) => {
-    const { apiToken } = req.body;
+app.post('/getTimeTotals', async (req, res) => {
+    const { apiToken, workspaceId } = req.body;
     try {
         const timeEntries = await getTimeEntries(apiToken);
-        res.json(timeEntries);
+        const totalTimes = calculateTotalTimes(timeEntries);
+        const byProjectId = totalTimes.projects;
+        const byProjectName = {};
+        for (let projectId in byProjectId) {
+            const projectName = await getProjectName(apiToken, workspaceId, projectId);
+            byProjectName[projectName] = byProjectId[projectId];
+        }
+        res.json({
+            total: totalTimes.total,
+            projects: byProjectName
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     } 
