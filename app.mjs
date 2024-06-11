@@ -67,7 +67,8 @@ function calculateTotalTimes(events) {
     events.forEach(event => {
         let duration = event.duration;
         if (duration < 0) {
-            duration += new Date().getTime() / 1000;
+            const start = new Date(event.start);
+            duration = (new Date().getTime() - start.getTime()) / 1000;
         }
         let durationHours = duration / 3600;
         totalHours += durationHours;
