@@ -1,0 +1,93 @@
+body,
+html {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+    background-color: black;
+    color: white;
+}
+#loginBtn {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    padding: 10px;
+    font-size: 1.5em;
+    border: none;
+    cursor: pointer;
+    border-radius: 15px;
+}
+.grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    width: 90vw;
+    height: 90vh;
+}
+@media (orientation: portrait) {
+  .grid {
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(4, 1fr);
+  }
+}
+.container {
+    cursor: pointer;
+    font-size: calc(10px + 2vmin);
+    margin: 2vmin;
+    background-color: rgb(40, 40, 40);  
+    border: none;
+    border-radius: 1em;  
+    position: relative;
+    display: flex;  
+    align-items: center;  
+    text-align: center;
+    justify-content: center;  
+}  
+.fill {  
+    border: none;
+    border-radius: 1em;  
+    width: 100%;
+    height: 50%;
+    position: absolute;  
+    bottom: 0;  
+    left: 0;
+    transition: height 1s ease-in-out;
+}  
+.label {  
+    position: relative;  
+    z-index: 1;  
+    color: white;
+    font-size: 24px;  
+}  
+.offset {
+    position: absolute;
+    font-size: 80%;
+    top: 1em;
+    right: 1em;
+}
+.modal {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: white;
+    color: black;
+    padding: 1em;
+    border-radius: 10px;
+}
+.modal input {
+    display: block;
+    margin: 1em 0;
+    padding: 1em;
+    width: 20em;
+}
+.modal button {
+    padding: 1em;
+    width: 100%;
+    font-size: 2em;
+}

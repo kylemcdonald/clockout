@@ -1,148 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Toggl Time Tracker</title>
-    <style>
-        body,
-        html {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: Arial, sans-serif;
-            overflow: hidden;
-            background-color: black;
-            color: white;
-        }
-        #loginBtn {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            padding: 10px;
-            font-size: 1.5em;
-            border: none;
-            cursor: pointer;
-            border-radius: 15px;
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            grid-template-rows: repeat(3, 1fr);
-            width: 90vw;
-            height: 90vh;
-        }
-        .container {
-            font-size: calc(10px + 2vmin);
-            margin: 2vmin;
-            background-color: rgb(40, 40, 40);  
-            border: none;
-            border-radius: 1em;  
-            position: relative;
-            display: flex;  
-            align-items: center;  
-            text-align: center;
-            justify-content: center;  
-        }  
-        .fill {  
-            border: none;
-            border-radius: 1em;  
-            width: 100%;
-            height: 50%;
-            position: absolute;  
-            bottom: 0;  
-            left: 0;
-            transition: height 1s ease-in-out;
-        }  
-        .label {  
-            position: relative;  
-            z-index: 1;  
-            color: white;
-            font-size: 24px;  
-        }  
-        .offset {
-            position: absolute;
-            font-size: 80%;
-            top: 1em;
-            right: 1em;
-        }
-        .modal {
-            display: none;
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background-color: white;
-            color: black;
-            padding: 1em;
-            border-radius: 10px;
-        }
-        .modal input {
-            display: block;
-            margin: 1em 0;
-            padding: 1em;
-            width: 20em;
-        }
-        .modal button {
-            padding: 1em;
-            width: 100%;
-            font-size: 2em;
-        }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-    <div class="grid">
-        <div class="container" onclick="startTask('Sleep')">  
-            <div class="fill" style="background-color: #D15540;"></div>  
-            <span class="label" id="Sleep">Sleep</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Self-care')">  
-            <div class="fill" style="background-color: #D88045;"></div>  
-            <span class="label" id="Self-care">Self-care</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Exercise')">  
-            <div class="fill" style="background-color: #5EB868;"></div>  
-            <span class="label" id="Exercise">Exercise</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Alone')">  
-            <div class="fill" style="background-color: #439D43;"></div>  
-            <span class="label" id="Alone">Alone</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Family')">  
-            <div class="fill" style="background-color: #3B94B3;"></div>  
-            <span class="label" id="Family">Family</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Love')">  
-            <div class="fill" style="background-color: #9F509F;"></div>  
-            <span class="label" id="Love">Love</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Friends')">  
-            <div class="fill" style="background-color: #D7524E;"></div>  
-            <span class="label" id="Friends">Friends</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Work')">  
-            <div class="fill" style="background-color: #9E9A2F;"></div>  
-            <span class="label" id="Work">Work</span>  
-            <span class="offset"></span>
-        </div>  
-        <div class="container" onclick="startTask('Food')">  
-            <div class="fill" style="background-color: #3fc30f;"></div>  
-            <span class="label" id="Food">Food</span>  
-            <span class="offset"></span>
-        </div>  
-    </div>
+    <div class="grid" id="taskGrid"></div>
     <button id="loginBtn">Login</button>
     <div class="modal" id="loginModal">
         <input type="text" id="workspaceId" placeholder="Workspace ID">
@@ -151,16 +20,49 @@
     </div>
     <script>
         const targetTimes = {
-            'Sleep': 60,
-            'Self-care': 10,
-            'Exercise': 8,
-            'Alone': 10,
-            'Family': 2,
-            'Love': 20,
-            'Friends': 8,
-            'Work': 40,
-            'Food': 10
+            'Sleep': { time: 60, color: '#D15540' },
+            'Work': { time: 36, color: '#9E9A2F' },
+            'Art': { time: 20, color: '#D88045' },
+            'Friends': { time: 10, color: '#D7524E' },
+            'Food': { time: 8, color: '#3fc30f' },
+            'Self-care': { time: 8, color: '#D88045' },
+            'Exercise': { time: 8, color: '#5EB868' },
+            'Travel': { time: 6, color: '#D15540' },
+            'Alone': { time: 5, color: '#439D43' },
+            'Love': { time: 5, color: '#9F509F' },
+            'Family': { time: 2, color: '#3B94B3' },
         };
+
+        // Function to generate task containers
+        function generateTaskContainers() {
+            const taskGrid = document.getElementById('taskGrid');
+            for (const [taskName, taskData] of Object.entries(targetTimes)) {
+                const container = document.createElement('div');
+                container.className = 'container';
+                container.onclick = () => startTask(taskName);
+
+                const fill = document.createElement('div');
+                fill.className = 'fill';
+                fill.style.backgroundColor = taskData.color;
+
+                const label = document.createElement('span');
+                label.className = 'label';
+                label.id = taskName;
+                label.textContent = taskName;
+
+                const offset = document.createElement('span');
+                offset.className = 'offset';
+
+                container.appendChild(fill);
+                container.appendChild(label);
+                container.appendChild(offset);
+
+                taskGrid.appendChild(container);
+            }
+        }
+
+        // Call the function to generate task containers
+        generateTaskContainers();
 
         let currentTaskId = null;
         let workspaceId = getCookie('workspaceId') || '';
@@ -209,23 +111,19 @@
             });
             const totals = await response.json();
             const byProject = totals.projects;
-            
-            // print the totals compared to the targets
-            for (const project in targetTimes) {
-                const target = targetTimes[project];
-                let total = 0;
-                if (byProject[project]) {
-                    total = byProject[project];
-                }
-
-                const ratio = total / target;
+            let sum = 0;
+            for (const [project, taskData] of Object.entries(targetTimes)) {
+                const target = taskData.time;
+                let total = byProject[project] || 0;
+                sum += target;
+                const ratio = Math.max(0, Math.min(total / target, 2));
                 const label = document.getElementById(project);
                 const fill = label.previousElementSibling;
                 fill.style.height = `${ratio * 50}%`;
-                
+
                 const relative = ratio - 1;
                 const difference = Math.round(total - target);
-                
+
                 const offset = label.nextElementSibling;
                 if (relative > 0.1) {
                     offset.innerText = `+${difference}`;
@@ -239,13 +137,18 @@
                     offset.innerText = '';
                 }
             }
+            if (sum < 168) {
+                alert("Total hours is under by " + (168 - sum) + " hours"); 
+            } else if (sum > 168) {
+                alert("Total hours is over by " + (sum - 168) + " hours");
+            }
         }
 
         getCurrentTask();
         updateTotals();
         setInterval(() => {
             getCurrentTask();
-        }, 60*1000);
+        }, 60 * 1000);
 
         async function startTask(taskName) {
             const response = await fetch('/startTask', {
@@ -260,7 +163,6 @@
                 })
             });
             const data = await response.json();
-            console.log(data);
             currentTaskId = data.id;
             updateButtonStyles(taskName);
         }
@@ -317,4 +219,5 @@
         }
     </script>
 </body>
+
 </html>
