@@ -148,6 +148,7 @@
         updateTotals();
         setInterval(() => {
             getCurrentTask();
+            updateTotals();
         }, 60 * 1000);
 
         async function startTask(taskName) {
