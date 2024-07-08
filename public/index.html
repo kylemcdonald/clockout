@@ -19,52 +19,8 @@
         <button onclick="saveCredentials()">Save</button>
     </div>
     <script>
-        const targetTimes = {
-            'Sleep': { time: 60, color: '#D15540' },
-            'Work': { time: 36, color: '#9E9A2F' },
-            'Art': { time: 18, color: '#D88045' },
-            'Friends': { time: 8, color: '#D7524E' },
-            'Food': { time: 8, color: '#3fc30f' },
-            'Self-care': { time: 8, color: '#D88045' },
-            'Exercise': { time: 8, color: '#5EB868' },
-            'Travel': { time: 6, color: '#D15540' },
-            'Alone': { time: 5, color: '#439D43' },
-            'Love': { time: 5, color: '#9F509F' },
-            'Chores': { time: 4, color: '#D88045' },
-            'Family': { time: 2, color: '#3B94B3' }
-        };
-
-        // Function to generate task containers
-        function generateTaskContainers() {
-            const taskGrid = document.getElementById('taskGrid');
-            for (const [taskName, taskData] of Object.entries(targetTimes)) {
-                const container = document.createElement('div');
-                container.className = 'container';
-                container.onclick = () => startTask(taskName);
-
-                const fill = document.createElement('div');
-                fill.className = 'fill';
-                fill.style.backgroundColor = taskData.color;
-
-                const label = document.createElement('span');
-                label.className = 'label';
-                label.id = taskName;
-                label.textContent = taskName;
-
-                const offset = document.createElement('span');
-                offset.className = 'offset';
-
-                container.appendChild(fill);
-                container.appendChild(label);
-                container.appendChild(offset);
-
-                taskGrid.appendChild(container);
-            }
-        }
-
-        // Call the function to generate task containers
-        generateTaskContainers();
-
+        let projects = [];
+        const colors = ['#D15540', '#9E9A2F', '#D88045', '#D7524E', '#3fc30f', '#5EB868', '#439D43', '#9F509F'];
         let currentTaskId = null;
         let workspaceId = getCookie('workspaceId') || '';
         let apiToken = getCookie('apiToken') || '';
@@ -81,6 +37,52 @@
             setCookie('workspaceId', workspaceId, 365);
             setCookie('apiToken', apiToken, 365);
             document.getElementById('loginModal').style.display = 'none';
+            fetchProjects();
+        }
+
+        async function fetchProjects() {
+            const response = await fetch('/getProjects', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    apiToken,
+                    workspaceId
+                })
+            });
+            projects = await response.json();
+            generateTaskContainers();
+            getCurrentTask();
+            updateTotals();
+        }
+
+        function generateTaskContainers() {
+            const taskGrid = document.getElementById('taskGrid');
+            taskGrid.innerHTML = ''; // Clear existing containers
+            projects.forEach((project, index) => {
+                const container = document.createElement('div');
+                container.className = 'container';
+                container.onclick = () => startTask(project.name);
+
+                const fill = document.createElement('div');
+                fill.className = 'fill';
+                fill.style.backgroundColor = colors[index % colors.length];
+
+                const label = document.createElement('span');
+                label.className = 'label';
+                label.id = project.name;
+                label.textContent = project.name;
+
+                const offset = document.createElement('span');
+                offset.className = 'offset';
+
+                container.appendChild(fill);
+                container.appendChild(label);
+                container.appendChild(offset);
+
+                taskGrid.appendChild(container);
+            });
         }
 
         async function getCurrentTask() {
@@ -113,12 +115,12 @@
             const totals = await response.json();
             const byProject = totals.projects;
             let sum = 0;
-            for (const [project, taskData] of Object.entries(targetTimes)) {
-                const target = taskData.time;
-                let total = byProject[project] || 0;
+            projects.forEach(project => {
+                const target = project.targetTime;
+                let total = byProject[project.name] || 0;
                 sum += target;
                 const ratio = Math.max(0, Math.min(total / target, 2));
-                const label = document.getElementById(project);
+                const label = document.getElementById(project.name);
                 const fill = label.previousElementSibling;
                 fill.style.height = `${ratio * 50}%`;
 
@@ -137,9 +139,9 @@
                 } else {
                     offset.innerText = '';
                 }
-            }
+            });
             if (sum < 168) {
-                alert("Total hours is under by " + (168 - sum) + " hours"); 
+                alert("Total hours is under by " + (168 - sum) + " hours");
             } else if (sum > 168) {
                 alert("Total hours is over by " + (sum - 168) + " hours");
             }
@@ -218,6 +220,10 @@
                 }
             }
             return "";
+        }
+
+        if (workspaceId && apiToken) {
+            fetchProjects();
         }
     </script>
 </body>

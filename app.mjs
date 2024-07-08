@@ -30,6 +30,20 @@ function memoize(func) {
     };
 }
 
+function parseProjects(projects) {
+    return projects
+        .filter(project => project.name.includes('/'))
+        .map(project => {
+            const [name, targetTime] = project.name.split('/');
+            return {
+                id: project.id,
+                name: name,
+                targetTime: parseInt(targetTime, 10)
+            };
+        })
+        .sort((a, b) => b.targetTime - a.targetTime);
+}
+
 const getProjects = memoize(async (apiToken, workspaceId) => {
     const response = await fetch(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/projects`, {
         headers: {
@@ -38,8 +52,18 @@ const getProjects = memoize(async (apiToken, workspaceId) => {
         }
     });
     const data = await response.json();
-    return data;
-})
+    return parseProjects(data);
+});
+
+app.post('/getProjects', async (req, res) => {
+    const { apiToken, workspaceId } = req.body;
+    try {
+        const projects = await getProjects(apiToken, workspaceId);
+        res.json(projects);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 async function getTimeEntries(apiToken) {
     // get unix timestamp for this time one week ago
@@ -94,7 +118,7 @@ async function getProjectId(apiToken, workspaceId, projectName) {
 async function getProjectName(apiToken, workspaceId, projectId) {
     const data = await getProjects(apiToken, workspaceId);
     const project = data.find(p => p.id == projectId);
-    return project.name;
+    return project ? project.name : null;
 }
 
 app.post('/getTimeTotals', async (req, res) => {
