@@ -14,7 +14,6 @@
     <div class="grid" id="taskGrid"></div>
     <button id="loginBtn">Login</button>
     <div class="modal" id="loginModal">
-        <input type="text" id="workspaceId" placeholder="Workspace ID">
         <input type="text" id="apiToken" placeholder="API Token">
         <button onclick="saveCredentials()">Save</button>
     </div>
@@ -22,9 +21,7 @@
         let projects = [];
         const colors = ['#D15540', '#9E9A2F', '#D88045', '#D7524E', '#3fc30f', '#5EB868', '#439D43', '#9F509F'];
         let currentTaskId = null;
-        let workspaceId = getCookie('workspaceId') || '';
         let apiToken = getCookie('apiToken') || '';
-        document.getElementById('workspaceId').value = workspaceId;
         document.getElementById('apiToken').value = apiToken;
 
         document.getElementById('loginBtn').addEventListener('click', () => {
@@ -32,29 +29,29 @@
         });
 
         function saveCredentials() {
-            workspaceId = document.getElementById('workspaceId').value;
             apiToken = document.getElementById('apiToken').value;
-            setCookie('workspaceId', workspaceId, 365);
             setCookie('apiToken', apiToken, 365);
             document.getElementById('loginModal').style.display = 'none';
             fetchProjects();
         }
 
         async function fetchProjects() {
-            const response = await fetch('/getProjects', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    apiToken,
-                    workspaceId
-                })
-            });
-            projects = await response.json();
-            generateTaskContainers();
-            getCurrentTask();
-            updateTotals();
+            try {
+                const response = await fetch('/getProjects', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        apiToken
+                    })
+                });
+                projects = await response.json();
+                generateTaskContainers();
+                getCurrentTask().then(updateTotals);
+            } catch (error) {
+                console.error('Error fetching projects:', error);
+            }
         }
 
         function generateTaskContainers() {
@@ -92,8 +89,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    apiToken,
-                    workspaceId
+                    apiToken
                 })
             });
             const data = await response.json();
@@ -108,8 +104,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    apiToken,
-                    workspaceId
+                    apiToken
                 })
             });
             const totals = await response.json();
@@ -147,8 +142,6 @@
             }
         }
 
-        getCurrentTask();
-        updateTotals();
         setInterval(() => {
             getCurrentTask();
             updateTotals();
@@ -162,7 +155,6 @@
                 },
                 body: JSON.stringify({
                     apiToken,
-                    workspaceId,
                     taskName
                 })
             });
@@ -179,7 +171,6 @@
                 },
                 body: JSON.stringify({
                     apiToken,
-                    workspaceId,
                     taskId: currentTaskId
                 })
             });
@@ -222,7 +213,7 @@
             return "";
         }
 
-        if (workspaceId && apiToken) {
+        if (apiToken) {
             fetchProjects();
         }
     </script>

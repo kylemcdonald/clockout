@@ -55,21 +55,9 @@ const getProjects = memoize(async (apiToken, workspaceId) => {
     return parseProjects(data);
 });
 
-app.post('/getProjects', async (req, res) => {
-    const { apiToken, workspaceId } = req.body;
-    try {
-        const projects = await getProjects(apiToken, workspaceId);
-        res.json(projects);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
 async function getTimeEntries(apiToken) {
-    // get unix timestamp for this time one week ago
     const now = new Date();
     const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-    // const since = Math.floor(oneWeekAgo.getTime() / 1000);
     const start_date = oneWeekAgo.toISOString();
     const end_date = now.toISOString();
     
@@ -121,9 +109,33 @@ async function getProjectName(apiToken, workspaceId, projectId) {
     return project ? project.name : null;
 }
 
-app.post('/getTimeTotals', async (req, res) => {
-    const { apiToken, workspaceId } = req.body;
+async function getDefaultWorkspaceId(apiToken) {
+    const response = await fetch("https://api.track.toggl.com/api/v9/me", {
+        method: "GET",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Basic " + Buffer.from(`${apiToken}:api_token`).toString("base64")
+        },
+    });
+    const data = await response.json();
+    return data.default_workspace_id;
+}
+
+app.post('/getProjects', async (req, res) => {
+    const { apiToken } = req.body;
     try {
+        const workspaceId = await getDefaultWorkspaceId(apiToken);
+        const projects = await getProjects(apiToken, workspaceId);
+        res.json(projects);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/getTimeTotals', async (req, res) => {
+    const { apiToken } = req.body;
+    try {
+        const workspaceId = await getDefaultWorkspaceId(apiToken);
         const timeEntries = await getTimeEntries(apiToken);
         const totalTimes = calculateTotalTimes(timeEntries);
         const byProjectId = totalTimes.projects;
@@ -142,8 +154,9 @@ app.post('/getTimeTotals', async (req, res) => {
 })
 
 app.post('/getCurrentTask', async (req, res) => {
-    const { apiToken, workspaceId } = req.body;
+    const { apiToken } = req.body;
     try {
+        const workspaceId = await getDefaultWorkspaceId(apiToken);
         const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries/current`, {
             method: 'GET',
             headers: {
@@ -160,8 +173,9 @@ app.post('/getCurrentTask', async (req, res) => {
 })
 
 app.post('/currentTask', async (req, res) => {
-    const { apiToken, workspaceId, taskName } = req.body;
+    const { apiToken, taskName } = req.body;
     try {
+        const workspaceId = await getDefaultWorkspaceId(apiToken);
         const projectId = await getProjectId(apiToken, workspaceId, taskName);
         const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries/current`, {
             method: 'POST',
@@ -188,8 +202,9 @@ app.post('/currentTask', async (req, res) => {
 })
 
 app.post('/startTask', async (req, res) => {
-    const { apiToken, workspaceId, taskName } = req.body;
+    const { apiToken, taskName } = req.body;
     try {
+        const workspaceId = await getDefaultWorkspaceId(apiToken);
         const projectId = await getProjectId(apiToken, workspaceId, taskName);
         const response = await fetch(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries`, {
             method: 'POST',
@@ -216,8 +231,9 @@ app.post('/startTask', async (req, res) => {
 });
 
 app.patch('/stopTask', async (req, res) => {
-    const { apiToken, workspaceId, taskId } = req.body;
+    const { apiToken, taskId } = req.body;
     try {
+        const workspaceId = await getDefaultWorkspaceId(apiToken);
         await fetch(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries/${taskId}/stop`, {
             method: 'PATCH',
             headers: {
