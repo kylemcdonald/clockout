@@ -38,7 +38,8 @@ function parseProjects(projects) {
             return {
                 id: project.id,
                 name: name,
-                targetTime: parseInt(targetTime, 10)
+                targetTime: parseInt(targetTime, 10),
+                color: project.color
             };
         })
         .sort((a, b) => b.targetTime - a.targetTime);

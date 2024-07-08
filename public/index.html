@@ -6,8 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Toggl Time Tracker</title>
+    <title>Clock-Out</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="apple-touch-icon" sizes="180x180" href="icon.png">  
+    <link rel="icon" href="icon.png" sizes="any">
 </head>
 
 <body>
@@ -47,6 +49,7 @@
                     })
                 });
                 projects = await response.json();
+                console.log(projects);
                 generateTaskContainers();
                 getCurrentTask().then(updateTotals);
             } catch (error) {
@@ -64,7 +67,7 @@
 
                 const fill = document.createElement('div');
                 fill.className = 'fill';
-                fill.style.backgroundColor = colors[index % colors.length];
+                fill.style.backgroundColor = project.color;
 
                 const label = document.createElement('span');
                 label.className = 'label';
@@ -214,6 +217,8 @@
         }
 
         if (apiToken) {
+            // get login button and set opacity to 0.5
+            document.getElementById('loginBtn').style.opacity = '0.25';
             fetchProjects();
         }
     </script>
