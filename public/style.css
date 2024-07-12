@@ -59,11 +59,18 @@ html {
 }  
 .label {  
     position: relative;  
-    z-index: 1;  
+    display: flex;
+    z-index: 1;
     color: white;
-    font-size: clamp(10px, 2vw, 24px);
-    overflow-wrap: break-word;
     max-width: 90%;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    word-break: break-word;
+    hyphens: auto;
 }  
 .offset {
     position: absolute;

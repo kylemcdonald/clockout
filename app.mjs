@@ -20,8 +20,13 @@ app.get('/', (req, res) => {
 function memoize(func) {
     const cache = {};
     return async function(...args) {
+        let forceUpdate = false;
+        if (typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null) {
+            const options = args.pop();
+            forceUpdate = options.forceUpdate === true;
+        }
         const key = JSON.stringify(args);
-        if (cache[key]) {
+        if (!forceUpdate && cache[key]) {
             return cache[key];
         }
         const result = await func(...args);
@@ -123,10 +128,10 @@ async function getDefaultWorkspaceId(apiToken) {
 }
 
 app.post('/getProjects', async (req, res) => {
-    const { apiToken } = req.body;
+    const { apiToken, forceUpdate } = req.body;
     try {
         const workspaceId = await getDefaultWorkspaceId(apiToken);
-        const projects = await getProjects(apiToken, workspaceId);
+        const projects = await getProjects(apiToken, workspaceId, { forceUpdate: forceUpdate });
         res.json(projects);
     } catch (error) {
         res.status(500).json({ error: error.message });

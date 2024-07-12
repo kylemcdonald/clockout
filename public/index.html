@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Clock-Out</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="apple-touch-icon" sizes="180x180" href="icon.png">  
+    <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
     <link rel="icon" href="icon.png" sizes="any">
 </head>
 
@@ -45,11 +45,11 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        apiToken
+                        apiToken: apiToken,
+                        forceUpdate: true
                     })
                 });
                 projects = await response.json();
-                console.log(projects);
                 generateTaskContainers();
                 getCurrentTask().then(updateTotals);
             } catch (error) {
