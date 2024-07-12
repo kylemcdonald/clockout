@@ -61,7 +61,9 @@ html {
     position: relative;  
     z-index: 1;  
     color: white;
-    font-size: 24px;  
+    font-size: clamp(10px, 2vw, 24px);
+    overflow-wrap: break-word;
+    max-width: 90%;
 }  
 .offset {
     position: absolute;
