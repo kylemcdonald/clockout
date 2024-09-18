@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Clock-Out</title>
     <link rel="stylesheet" href="style.css">
@@ -60,6 +60,37 @@
         function generateTaskContainers() {
             const taskGrid = document.getElementById('taskGrid');
             taskGrid.innerHTML = ''; // Clear existing containers
+            
+            // Calculate total target hours
+            const totalTargetHours = projects.reduce((sum, project) => sum + project.targetTime, 0);
+            console.log(`Total target hours: ${totalTargetHours}`);
+            
+            if (totalTargetHours !== 168) {
+                console.warn(`Warning: Total target hours (${totalTargetHours}) is not equal to 168.`);
+            }
+
+            // Determine the appropriate grid layout
+            const isPortrait = window.innerHeight > window.innerWidth;
+            const projectCount = projects.length;
+            
+            if (isPortrait) {
+                if (projectCount > 12) {
+                    taskGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+                    taskGrid.style.gridTemplateRows = 'repeat(5, 1fr)';
+                } else {
+                    taskGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+                    taskGrid.style.gridTemplateRows = 'repeat(4, 1fr)';
+                }
+            } else {
+                if (projectCount > 12) {
+                    taskGrid.style.gridTemplateColumns = 'repeat(5, 1fr)';
+                    taskGrid.style.gridTemplateRows = 'repeat(3, 1fr)';
+                } else {
+                    taskGrid.style.gridTemplateColumns = 'repeat(4, 1fr)';
+                    taskGrid.style.gridTemplateRows = 'repeat(3, 1fr)';
+                }
+            }
+            
             projects.forEach((project, index) => {
                 const container = document.createElement('div');
                 container.className = 'container';
@@ -122,18 +153,13 @@
                 const fill = label.previousElementSibling;
                 fill.style.height = `${ratio * 50}%`;
 
-                const relative = ratio - 1;
                 const difference = Math.round(total - target);
 
                 const offset = label.nextElementSibling;
-                if (relative > 0.1) {
-                    offset.innerText = `+${difference}`;
-                    offset.style.left = 'auto';
-                    offset.style.right = '1em';
-                } else if (relative < -0.1) {
-                    offset.innerText = `${difference}`;
-                    offset.style.left = '1em';
-                    offset.style.right = 'auto';
+                if (Math.abs(difference) > 0) {
+                    offset.innerText = difference > 0 ? `+${difference}` : `${difference}`;
+                    offset.style.left = difference < 0 ? '1em' : 'auto';
+                    offset.style.right = difference > 0 ? '1em' : 'auto';
                 } else {
                     offset.innerText = '';
                 }
