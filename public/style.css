@@ -21,6 +21,26 @@ html {
     cursor: pointer;
     border-radius: 15px;
 }
+
+.untracked-indicator {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 1.2em;
+    font-weight: bold;
+    color: white;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    display: none;
+}
+
+.untracked-indicator span {
+    font-family: 'Courier New', monospace;
+}
 .grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);

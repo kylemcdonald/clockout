@@ -13,6 +13,9 @@
 </head>
 
 <body>
+    <div id="untrackedIndicator" class="untracked-indicator">
+        <span id="untrackedText">--:--</span>
+    </div>
     <div class="grid" id="taskGrid"></div>
     <button id="loginBtn">Login</button>
     <div class="modal" id="loginModal">
@@ -51,7 +54,10 @@
                 });
                 projects = await response.json();
                 generateTaskContainers();
-                getCurrentTask().then(updateTotals);
+                getCurrentTask().then(() => {
+                    updateTotals();
+                    updateUntrackedTime();
+                });
             } catch (error) {
                 console.error('Error fetching projects:', error);
             }
@@ -166,9 +172,37 @@
             });
         }
 
+        async function updateUntrackedTime() {
+            try {
+                const response = await fetch('/getUntrackedTime', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        apiToken
+                    })
+                });
+                const data = await response.json();
+                const hours = data.untrackedHours;
+                const minutes = data.untrackedMinutes;
+                const untrackedText = document.getElementById('untrackedText');
+                
+                if (totalUntracked > 1) {
+                    untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+                    untrackedIndicator.style.display = 'block';
+                } else {
+                    untrackedIndicator.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error updating untracked time:', error);
+            }
+        }
+
         setInterval(() => {
             getCurrentTask();
             updateTotals();
+            updateUntrackedTime();
         }, 60 * 1000);
 
         async function startTask(taskName) {

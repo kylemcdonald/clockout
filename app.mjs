@@ -159,6 +159,31 @@ app.post('/getTimeTotals', async (req, res) => {
     } 
 })
 
+app.post('/getUntrackedTime', async (req, res) => {
+    const { apiToken } = req.body;
+    try {
+        const timeEntries = await getTimeEntries(apiToken);
+        const totalTimes = calculateTotalTimes(timeEntries);
+        
+        // Calculate total hours in a week (168 hours)
+        const totalWeekHours = 168;
+        const trackedHours = totalTimes.total;
+        const untrackedHours = Math.max(0, totalWeekHours - trackedHours);
+        
+        // Convert to hours and minutes
+        const hours = Math.floor(untrackedHours);
+        const minutes = Math.round((untrackedHours - hours) * 60);
+        
+        res.json({
+            untrackedHours: hours,
+            untrackedMinutes: minutes,
+            totalUntracked: untrackedHours
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+})
+
 app.post('/getCurrentTask', async (req, res) => {
     const { apiToken } = req.body;
     try {
