@@ -5,13 +5,16 @@
   "main": "app.mjs",
   "scripts": {
     "start": "node app.mjs",
+    "start:simple": "node app-simple.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.19.2",
+    "http-proxy-middleware": "^2.0.6",
     "node-fetch": "^3.3.2"
   }
 }

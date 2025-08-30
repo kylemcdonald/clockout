@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import fetch from 'node-fetch';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,6 +11,9 @@ const __dirname = dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Enable CORS for all routes
+app.use(cors());
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -17,266 +21,31 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-function memoize(func) {
-    const cache = {};
-    return async function(...args) {
-        let forceUpdate = false;
-        if (typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null) {
-            const options = args.pop();
-            forceUpdate = options.forceUpdate === true;
-        }
-        const key = JSON.stringify(args);
-        if (!forceUpdate && cache[key]) {
-            return cache[key];
-        }
-        const result = await func(...args);
-        cache[key] = result;
-        return result;
-    };
-}
-
-function parseProjects(projects) {
-    return projects
-        .filter(project => project.name.includes('/'))
-        .map(project => {
-            const [name, targetTime] = project.name.split('/');
-            return {
-                id: project.id,
-                name: name,
-                targetTime: parseInt(targetTime, 10),
-                color: project.color
-            };
-        })
-        .sort((a, b) => b.targetTime - a.targetTime);
-}
-
-const getProjects = memoize(async (apiToken, workspaceId) => {
-    const response = await fetch(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/projects`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
-        }
-    });
-    const data = await response.json();
-    return parseProjects(data);
-});
-
-async function getTimeEntries(apiToken) {
-    const now = new Date();
-    const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-    const start_date = oneWeekAgo.toISOString();
-    const end_date = now.toISOString();
-    
-    const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start_date}&end_date=${end_date}`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
-        }
-    });
-    const data = await response.json();
-    return data;
-}
-
-function calculateTotalTimes(events) {
-    let totalHours = 0;
-    let projectTimes = {};
-
-    events.forEach(event => {
-        let duration = event.duration;
-        if (duration < 0) {
-            const start = new Date(event.start);
-            duration = (new Date().getTime() - start.getTime()) / 1000;
-        }
-        let durationHours = duration / 3600;
-        totalHours += durationHours;
-        if (projectTimes[event.project_id]) {
-            projectTimes[event.project_id] += durationHours;
-        } else {
-            projectTimes[event.project_id] = durationHours;
-        }
-    });
-
-    return {
-        total: totalHours,
-        projects: projectTimes
-    };
-}
-
-async function getProjectId(apiToken, workspaceId, projectName) {
-    const data = await getProjects(apiToken, workspaceId)
-    const project = data.find(p => p.name === projectName);
-    return project.id;
-}
-
-async function getProjectName(apiToken, workspaceId, projectId) {
-    const data = await getProjects(apiToken, workspaceId);
-    const project = data.find(p => p.id == projectId);
-    return project ? project.name : null;
-}
-
-async function getDefaultWorkspaceId(apiToken) {
-    const response = await fetch("https://api.track.toggl.com/api/v9/me", {
-        method: "GET",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Basic " + Buffer.from(`${apiToken}:api_token`).toString("base64")
-        },
-    });
-    const data = await response.json();
-    return data.default_workspace_id;
-}
-
-app.post('/getProjects', async (req, res) => {
-    const { apiToken, forceUpdate } = req.body;
+// Simple CORS proxy
+app.all('/proxy', async (req, res) => {
     try {
-        const workspaceId = await getDefaultWorkspaceId(apiToken);
-        const projects = await getProjects(apiToken, workspaceId, { forceUpdate: forceUpdate });
-        res.json(projects);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/getTimeTotals', async (req, res) => {
-    const { apiToken } = req.body;
-    try {
-        const workspaceId = await getDefaultWorkspaceId(apiToken);
-        const timeEntries = await getTimeEntries(apiToken);
-        const totalTimes = calculateTotalTimes(timeEntries);
-        const byProjectId = totalTimes.projects;
-        const byProjectName = {};
-        for (let projectId in byProjectId) {
-            const projectName = await getProjectName(apiToken, workspaceId, projectId);
-            byProjectName[projectName] = byProjectId[projectId];
+        const targetUrl = req.query.url;
+        if (!targetUrl) {
+            return res.status(400).json({ error: 'Missing url parameter' });
         }
-        res.json({
-            total: totalTimes.total,
-            projects: byProjectName
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    } 
-})
 
-app.post('/getUntrackedTime', async (req, res) => {
-    const { apiToken } = req.body;
-    try {
-        const timeEntries = await getTimeEntries(apiToken);
-        const totalTimes = calculateTotalTimes(timeEntries);
-        
-        // Calculate total hours in a week (168 hours)
-        const totalWeekHours = 168;
-        const trackedHours = totalTimes.total;
-        const untrackedHours = Math.max(0, totalWeekHours - trackedHours);
-        
-        // Convert to hours and minutes
-        const hours = Math.floor(untrackedHours);
-        const minutes = Math.round((untrackedHours - hours) * 60);
-        
-        res.json({
-            untrackedHours: hours,
-            untrackedMinutes: minutes,
-            totalUntracked: untrackedHours
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-})
-
-app.post('/getCurrentTask', async (req, res) => {
-    const { apiToken } = req.body;
-    try {
-        const workspaceId = await getDefaultWorkspaceId(apiToken);
-        const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries/current`, {
-            method: 'GET',
+        const response = await fetch(targetUrl, {
+            method: req.method,
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
-            }
-        });
-        const data = await response.json();
-        data.name = await getProjectName(apiToken, workspaceId, data.project_id);
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    } 
-})
-
-app.post('/currentTask', async (req, res) => {
-    const { apiToken, taskName } = req.body;
-    try {
-        const workspaceId = await getDefaultWorkspaceId(apiToken);
-        const projectId = await getProjectId(apiToken, workspaceId, taskName);
-        const response = await fetch(`https://api.track.toggl.com/api/v9/me/time_entries/current`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
+                ...req.headers,
+                host: new URL(targetUrl).host
             },
-            body: JSON.stringify({
-                created_with: 'iPad',
-                tags: [],
-                project_id: parseInt(projectId),
-                billable: false,
-                workspace_id: parseInt(workspaceId),
-                duration: -1,
-                start: new Date().toISOString(),
-                stop: null
-            })
+            body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
         });
-        const data = await response.json();
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    } 
-})
 
-app.post('/startTask', async (req, res) => {
-    const { apiToken, taskName } = req.body;
-    try {
-        const workspaceId = await getDefaultWorkspaceId(apiToken);
-        const projectId = await getProjectId(apiToken, workspaceId, taskName);
-        const response = await fetch(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
-            },
-            body: JSON.stringify({
-                created_with: 'iPad',
-                tags: [],
-                project_id: parseInt(projectId),
-                billable: false,
-                workspace_id: parseInt(workspaceId),
-                duration: -1,
-                start: new Date().toISOString(),
-                stop: null
-            })
-        });
-        const data = await response.json();
-        res.json(data);
+        const data = await response.text();
+        res.status(response.status).send(data);
     } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.patch('/stopTask', async (req, res) => {
-    const { apiToken, taskId } = req.body;
-    try {
-        const workspaceId = await getDefaultWorkspaceId(apiToken);
-        await fetch(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries/${taskId}/stop`, {
-            method: 'PATCH',
-            headers: {
-                'Authorization': 'Basic ' + Buffer.from(`${apiToken}:api_token`).toString('base64')
-            }
-        });
-        res.sendStatus(200);
-    } catch (error) {
+        console.error('Proxy error:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
 app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+    console.log(`Simple CORS proxy server running at http://localhost:${port}`);
 });

@@ -29,6 +29,118 @@
         let apiToken = getCookie('apiToken') || '';
         document.getElementById('apiToken').value = apiToken;
 
+        // Backend logic moved to frontend
+        function memoize(func) {
+            const cache = {};
+            return async function(...args) {
+                let forceUpdate = false;
+                if (typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null) {
+                    const options = args.pop();
+                    forceUpdate = options.forceUpdate === true;
+                }
+                const key = JSON.stringify(args);
+                if (!forceUpdate && cache[key]) {
+                    return cache[key];
+                }
+                const result = await func(...args);
+                cache[key] = result;
+                return result;
+            };
+        }
+
+        function parseProjects(projects) {
+            return projects
+                .filter(project => project.name.includes('/'))
+                .map(project => {
+                    const [name, targetTime] = project.name.split('/');
+                    return {
+                        id: project.id,
+                        name: name,
+                        targetTime: parseInt(targetTime, 10),
+                        color: project.color
+                    };
+                })
+                .sort((a, b) => b.targetTime - a.targetTime);
+        }
+
+        const getProjects = memoize(async (apiToken, workspaceId) => {
+            const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/projects`)}`, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
+                }
+            });
+            const data = await response.json();
+            return parseProjects(data);
+        });
+
+        async function getTimeEntries(apiToken) {
+            const now = new Date();
+            const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            const start_date = oneWeekAgo.toISOString();
+            const end_date = now.toISOString();
+            
+            const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start_date}&end_date=${end_date}`)}`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
+                }
+            });
+            const data = await response.json();
+            return data;
+        }
+
+        function calculateTotalTimes(events) {
+            let totalHours = 0;
+            let projectTimes = {};
+
+            events.forEach(event => {
+                let duration = event.duration;
+                if (duration < 0) {
+                    const start = new Date(event.start);
+                    duration = (new Date().getTime() - start.getTime()) / 1000;
+                }
+                let durationHours = duration / 3600;
+                totalHours += durationHours;
+                if (projectTimes[event.project_id]) {
+                    projectTimes[event.project_id] += durationHours;
+                } else {
+                    projectTimes[event.project_id] = durationHours;
+                }
+            });
+
+            return {
+                total: totalHours,
+                projects: projectTimes
+            };
+        }
+
+        async function getProjectId(apiToken, workspaceId, projectName) {
+            const data = await getProjects(apiToken, workspaceId);
+            const project = data.find(p => p.name === projectName);
+            return project.id;
+        }
+
+        async function getProjectName(apiToken, workspaceId, projectId) {
+            const data = await getProjects(apiToken, workspaceId);
+            const project = data.find(p => p.id == projectId);
+            return project ? project.name : null;
+        }
+
+        async function getDefaultWorkspaceId(apiToken) {
+            const response = await fetch(`/proxy?url=${encodeURIComponent("https://api.track.toggl.com/api/v9/me")}`, {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "Basic " + btoa(`${apiToken}:api_token`)
+                },
+            });
+            const data = await response.json();
+            return data.default_workspace_id;
+        }
+
+        // Frontend UI logic
         document.getElementById('loginBtn').addEventListener('click', () => {
             document.getElementById('loginModal').style.display = 'block';
         });
@@ -42,17 +154,8 @@
 
         async function fetchProjects() {
             try {
-                const response = await fetch('/getProjects', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        apiToken: apiToken,
-                        forceUpdate: true
-                    })
-                });
-                projects = await response.json();
+                const workspaceId = await getDefaultWorkspaceId(apiToken);
+                projects = await getProjects(apiToken, workspaceId, { forceUpdate: true });
                 generateTaskContainers();
                 getCurrentTask().then(() => {
                     updateTotals();
@@ -123,72 +226,88 @@
         }
 
         async function getCurrentTask() {
-            const response = await fetch('/getCurrentTask', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    apiToken
-                })
-            });
-            const data = await response.json();
-            currentTaskId = data.id;
-            updateButtonStyles(data.name);
+            try {
+                const workspaceId = await getDefaultWorkspaceId(apiToken);
+                const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/me/time_entries/current`)}`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
+                    }
+                });
+                const data = await response.json();
+                if (data.id) {
+                    currentTaskId = data.id;
+                    data.name = await getProjectName(apiToken, workspaceId, data.project_id);
+                    updateButtonStyles(data.name);
+                } else {
+                    currentTaskId = null;
+                    updateButtonStyles(null);
+                }
+            } catch (error) {
+                console.error('Error getting current task:', error);
+                currentTaskId = null;
+                updateButtonStyles(null);
+            }
         }
 
         async function updateTotals() {
-            const response = await fetch('/getTimeTotals', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    apiToken
-                })
-            });
-            const totals = await response.json();
-            const byProject = totals.projects;
-            let sum = 0;
-            projects.forEach(project => {
-                const target = project.targetTime;
-                let total = byProject[project.name] || 0;
-                sum += target;
-                const ratio = Math.max(0, Math.min(total / target, 2));
-                const label = document.getElementById(project.name);
-                const fill = label.previousElementSibling;
-                fill.style.height = `${ratio * 50}%`;
-
-                const difference = Math.round(total - target);
-
-                const offset = label.nextElementSibling;
-                if (Math.abs(difference) > 0) {
-                    offset.innerText = difference > 0 ? `+${difference}` : `${difference}`;
-                    offset.style.left = difference < 0 ? '1em' : 'auto';
-                    offset.style.right = difference > 0 ? '1em' : 'auto';
-                } else {
-                    offset.innerText = '';
+            try {
+                const workspaceId = await getDefaultWorkspaceId(apiToken);
+                const timeEntries = await getTimeEntries(apiToken);
+                const totalTimes = calculateTotalTimes(timeEntries);
+                const byProjectId = totalTimes.projects;
+                const byProjectName = {};
+                for (let projectId in byProjectId) {
+                    const projectName = await getProjectName(apiToken, workspaceId, projectId);
+                    byProjectName[projectName] = byProjectId[projectId];
                 }
-            });
+                
+                const byProject = byProjectName;
+                let sum = 0;
+                projects.forEach(project => {
+                    const target = project.targetTime;
+                    let total = byProject[project.name] || 0;
+                    sum += target;
+                    const ratio = Math.max(0, Math.min(total / target, 2));
+                    const label = document.getElementById(project.name);
+                    const fill = label.previousElementSibling;
+                    fill.style.height = `${ratio * 50}%`;
+
+                    const difference = Math.round(total - target);
+
+                    const offset = label.nextElementSibling;
+                    if (Math.abs(difference) > 0) {
+                        offset.innerText = difference > 0 ? `+${difference}` : `${difference}`;
+                        offset.style.left = difference < 0 ? '1em' : 'auto';
+                        offset.style.right = difference > 0 ? '1em' : 'auto';
+                    } else {
+                        offset.innerText = '';
+                    }
+                });
+            } catch (error) {
+                console.error('Error updating totals:', error);
+            }
         }
 
         async function updateUntrackedTime() {
             try {
-                const response = await fetch('/getUntrackedTime', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        apiToken
-                    })
-                });
-                const data = await response.json();
-                const hours = data.untrackedHours;
-                const minutes = data.untrackedMinutes;
-                const untrackedText = document.getElementById('untrackedText');
+                const timeEntries = await getTimeEntries(apiToken);
+                const totalTimes = calculateTotalTimes(timeEntries);
                 
-                if (totalUntracked > 1) {
+                // Calculate total hours in a week (168 hours)
+                const totalWeekHours = 168;
+                const trackedHours = totalTimes.total;
+                const untrackedHours = Math.max(0, totalWeekHours - trackedHours);
+                
+                // Convert to hours and minutes
+                const hours = Math.floor(untrackedHours);
+                const minutes = Math.round((untrackedHours - hours) * 60);
+                
+                const untrackedText = document.getElementById('untrackedText');
+                const untrackedIndicator = document.getElementById('untrackedIndicator');
+                
+                if (untrackedHours > 1) {
                     untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
                     untrackedIndicator.style.display = 'block';
                 } else {
@@ -206,34 +325,48 @@
         }, 60 * 1000);
 
         async function startTask(taskName) {
-            const response = await fetch('/startTask', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    apiToken,
-                    taskName
-                })
-            });
-            const data = await response.json();
-            currentTaskId = data.id;
-            updateButtonStyles(taskName);
+            try {
+                const workspaceId = await getDefaultWorkspaceId(apiToken);
+                const projectId = await getProjectId(apiToken, workspaceId, taskName);
+                const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries`)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
+                    },
+                    body: JSON.stringify({
+                        created_with: 'iPad',
+                        tags: [],
+                        project_id: parseInt(projectId),
+                        billable: false,
+                        workspace_id: parseInt(workspaceId),
+                        duration: -1,
+                        start: new Date().toISOString(),
+                        stop: null
+                    })
+                });
+                const data = await response.json();
+                currentTaskId = data.id;
+                updateButtonStyles(taskName);
+            } catch (error) {
+                console.error('Error starting task:', error);
+            }
         }
 
         async function stopCurrentTask() {
-            await fetch('/stopTask', {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    apiToken,
-                    taskId: currentTaskId
-                })
-            });
-            currentTaskId = null;
-            updateButtonStyles(null);
+            try {
+                const workspaceId = await getDefaultWorkspaceId(apiToken);
+                await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries/${currentTaskId}/stop`)}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
+                    }
+                });
+                currentTaskId = null;
+                updateButtonStyles(null);
+            } catch (error) {
+                console.error('Error stopping task:', error);
+            }
         }
 
         function updateButtonStyles(activeTask) {
