@@ -26,6 +26,14 @@
         let projects = [];
         const colors = ['#D15540', '#9E9A2F', '#D88045', '#D7524E', '#3fc30f', '#5EB868', '#439D43', '#9F509F'];
         let currentTaskId = null;
+        let currentTaskStartTime = null;
+        let currentTaskName = null;
+        let cachedProjectTotals = {};
+        let cachedTotalHours = 0;
+        let totalsLastUpdatedAt = null;
+        let currentTaskElapsedAtLastUpdateHours = 0;
+        let totalsUpdateInFlight = false;
+        const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
         let apiToken = getCookie('apiToken') || '';
         document.getElementById('apiToken').value = apiToken;
 
@@ -116,6 +124,73 @@
             };
         }
 
+        function getAdjustedTotals() {
+            const totals = { ...cachedProjectTotals };
+            let totalHours = cachedTotalHours;
+
+            if (currentTaskName && currentTaskStartTime) {
+                const currentElapsedHours = (Date.now() - currentTaskStartTime.getTime()) / 3600000;
+                const delta = Math.max(0, currentElapsedHours - currentTaskElapsedAtLastUpdateHours);
+                totals[currentTaskName] = (totals[currentTaskName] || 0) + delta;
+                totalHours += delta;
+            }
+
+            return { totals, totalHours };
+        }
+
+        function renderProjectTotals(projectTotals) {
+            projects.forEach(project => {
+                const target = project.targetTime;
+                const total = projectTotals[project.name] || 0;
+                const ratio = Math.max(0, Math.min(total / target, 2));
+                const label = document.getElementById(project.name);
+                if (!label) {
+                    return;
+                }
+                const fill = label.previousElementSibling;
+                fill.style.height = `${ratio * 50}%`;
+
+                const difference = Math.round(total - target);
+
+                const offset = label.nextElementSibling;
+                if (Math.abs(difference) > 0) {
+                    offset.innerText = difference > 0 ? `+${difference}` : `${difference}`;
+                    offset.style.left = difference < 0 ? '1em' : 'auto';
+                    offset.style.right = difference > 0 ? '1em' : 'auto';
+                } else {
+                    offset.innerText = '';
+                }
+            });
+        }
+
+        function renderUntracked(totalHours) {
+            const totalWeekHours = 168;
+            const trackedHours = totalHours;
+            const untrackedHours = Math.max(0, totalWeekHours - trackedHours);
+
+            const hours = Math.floor(untrackedHours);
+            const minutes = Math.round((untrackedHours - hours) * 60);
+
+            const untrackedText = document.getElementById('untrackedText');
+            const untrackedIndicator = document.getElementById('untrackedIndicator');
+
+            if (untrackedHours > 1) {
+                untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+                untrackedIndicator.style.display = 'block';
+            } else {
+                untrackedIndicator.style.display = 'none';
+            }
+        }
+
+        function renderTotalsFromCache() {
+            if (!projects.length) {
+                return;
+            }
+            const { totals, totalHours } = getAdjustedTotals();
+            renderProjectTotals(totals);
+            renderUntracked(totalHours);
+        }
+
         async function getProjectId(apiToken, workspaceId, projectName) {
             const data = await getProjects(apiToken, workspaceId);
             const project = data.find(p => p.name === projectName);
@@ -159,7 +234,6 @@
                 generateTaskContainers();
                 getCurrentTask().then(() => {
                     updateTotals();
-                    updateUntrackedTime();
                 });
             } catch (error) {
                 console.error('Error fetching projects:', error);
@@ -223,6 +297,7 @@
 
                 taskGrid.appendChild(container);
             });
+            renderTotalsFromCache();
         }
 
         async function getCurrentTask() {
@@ -235,23 +310,55 @@
                         'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
                     }
                 });
-                const data = await response.json();
-                if (data.id) {
+                if (response.status === 429) {
+                    console.warn('Rate limit hit when fetching current task');
+                    renderTotalsFromCache();
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch current task: ${response.status}`);
+                }
+                const raw = await response.text();
+                const data = raw ? JSON.parse(raw) : null;
+                if (data && data.id) {
                     currentTaskId = data.id;
                     data.name = await getProjectName(apiToken, workspaceId, data.project_id);
-                    updateButtonStyles(data.name);
+                    currentTaskName = data.name;
+                    currentTaskStartTime = data.start ? new Date(data.start) : null;
+                    if (currentTaskStartTime && totalsLastUpdatedAt) {
+                        currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
+                    } else {
+                        currentTaskElapsedAtLastUpdateHours = 0;
+                    }
+                    if (currentTaskName && !(currentTaskName in cachedProjectTotals)) {
+                        cachedProjectTotals[currentTaskName] = 0;
+                    }
+                    updateButtonStyles(currentTaskName);
+                    renderTotalsFromCache();
                 } else {
                     currentTaskId = null;
+                    currentTaskName = null;
+                    currentTaskStartTime = null;
+                    currentTaskElapsedAtLastUpdateHours = 0;
                     updateButtonStyles(null);
+                    renderTotalsFromCache();
                 }
             } catch (error) {
                 console.error('Error getting current task:', error);
                 currentTaskId = null;
+                currentTaskName = null;
+                currentTaskStartTime = null;
+                currentTaskElapsedAtLastUpdateHours = 0;
                 updateButtonStyles(null);
+                renderTotalsFromCache();
             }
         }
 
         async function updateTotals() {
+            if (totalsUpdateInFlight) {
+                return;
+            }
+            totalsUpdateInFlight = true;
             try {
                 const workspaceId = await getDefaultWorkspaceId(apiToken);
                 const timeEntries = await getTimeEntries(apiToken);
@@ -260,68 +367,32 @@
                 const byProjectName = {};
                 for (let projectId in byProjectId) {
                     const projectName = await getProjectName(apiToken, workspaceId, projectId);
+                    if (!projectName) {
+                        continue;
+                    }
                     byProjectName[projectName] = byProjectId[projectId];
                 }
-                
-                const byProject = byProjectName;
-                let sum = 0;
-                projects.forEach(project => {
-                    const target = project.targetTime;
-                    let total = byProject[project.name] || 0;
-                    sum += target;
-                    const ratio = Math.max(0, Math.min(total / target, 2));
-                    const label = document.getElementById(project.name);
-                    const fill = label.previousElementSibling;
-                    fill.style.height = `${ratio * 50}%`;
-
-                    const difference = Math.round(total - target);
-
-                    const offset = label.nextElementSibling;
-                    if (Math.abs(difference) > 0) {
-                        offset.innerText = difference > 0 ? `+${difference}` : `${difference}`;
-                        offset.style.left = difference < 0 ? '1em' : 'auto';
-                        offset.style.right = difference > 0 ? '1em' : 'auto';
-                    } else {
-                        offset.innerText = '';
-                    }
-                });
+                cachedProjectTotals = byProjectName;
+                cachedTotalHours = totalTimes.total;
+                totalsLastUpdatedAt = Date.now();
+                if (currentTaskStartTime) {
+                    currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
+                } else {
+                    currentTaskElapsedAtLastUpdateHours = 0;
+                }
+                renderTotalsFromCache();
             } catch (error) {
                 console.error('Error updating totals:', error);
-            }
-        }
-
-        async function updateUntrackedTime() {
-            try {
-                const timeEntries = await getTimeEntries(apiToken);
-                const totalTimes = calculateTotalTimes(timeEntries);
-                
-                // Calculate total hours in a week (168 hours)
-                const totalWeekHours = 168;
-                const trackedHours = totalTimes.total;
-                const untrackedHours = Math.max(0, totalWeekHours - trackedHours);
-                
-                // Convert to hours and minutes
-                const hours = Math.floor(untrackedHours);
-                const minutes = Math.round((untrackedHours - hours) * 60);
-                
-                const untrackedText = document.getElementById('untrackedText');
-                const untrackedIndicator = document.getElementById('untrackedIndicator');
-                
-                if (untrackedHours > 1) {
-                    untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-                    untrackedIndicator.style.display = 'block';
-                } else {
-                    untrackedIndicator.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Error updating untracked time:', error);
+            } finally {
+                totalsUpdateInFlight = false;
             }
         }
 
         setInterval(() => {
-            getCurrentTask();
-            updateTotals();
-            updateUntrackedTime();
+            renderTotalsFromCache();
+            if (!totalsLastUpdatedAt || (Date.now() - totalsLastUpdatedAt) >= TOTALS_REFRESH_INTERVAL_MS) {
+                updateTotals();
+            }
         }, 60 * 1000);
 
         async function startTask(taskName) {
@@ -347,6 +418,15 @@
                 });
                 const data = await response.json();
                 currentTaskId = data.id;
+                currentTaskName = taskName;
+                currentTaskStartTime = data.start ? new Date(data.start) : new Date();
+                if (!(taskName in cachedProjectTotals)) {
+                    cachedProjectTotals[taskName] = cachedProjectTotals[taskName] || 0;
+                }
+                currentTaskElapsedAtLastUpdateHours = totalsLastUpdatedAt && currentTaskStartTime
+                    ? Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000)
+                    : 0;
+                renderTotalsFromCache();
                 updateButtonStyles(taskName);
             } catch (error) {
                 console.error('Error starting task:', error);
@@ -363,6 +443,10 @@
                     }
                 });
                 currentTaskId = null;
+                currentTaskName = null;
+                currentTaskStartTime = null;
+                currentTaskElapsedAtLastUpdateHours = 0;
+                renderTotalsFromCache();
                 updateButtonStyles(null);
             } catch (error) {
                 console.error('Error stopping task:', error);
