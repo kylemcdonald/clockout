@@ -34,6 +34,7 @@
         let currentTaskElapsedAtLastUpdateHours = 0;
         let totalsUpdateInFlight = false;
         const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+        const DEFAULT_TITLE = document.title;
         let apiToken = getCookie('apiToken') || '';
         document.getElementById('apiToken').value = apiToken;
 
@@ -194,6 +195,28 @@
             } else {
                 untrackedIndicator.style.display = 'none';
             }
+        }
+
+        function formatElapsedDuration(durationSeconds) {
+            const totalSeconds = Math.max(0, Math.floor(durationSeconds));
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+            const totalMinutes = Math.floor(totalSeconds / 60);
+            return `${totalMinutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function updateDocumentTitle() {
+            if (currentTaskName && currentTaskStartTime instanceof Date) {
+                const elapsedSeconds = (Date.now() - currentTaskStartTime.getTime()) / 1000;
+                const formattedDuration = formatElapsedDuration(elapsedSeconds);
+                document.title = `${formattedDuration} ${currentTaskName}`;
+                return;
+            }
+            document.title = DEFAULT_TITLE;
         }
 
         function renderTotalsFromCache() {
@@ -358,6 +381,7 @@
                     }
                     updateButtonStyles(currentTaskName);
                     renderTotalsFromCache();
+                    updateDocumentTitle();
                 } else {
                     currentTaskId = null;
                     currentTaskName = null;
@@ -365,6 +389,7 @@
                     currentTaskElapsedAtLastUpdateHours = 0;
                     updateButtonStyles(null);
                     renderTotalsFromCache();
+                    updateDocumentTitle();
                 }
             } catch (error) {
                 console.error('Error getting current task:', error);
@@ -374,6 +399,7 @@
                 currentTaskElapsedAtLastUpdateHours = 0;
                 updateButtonStyles(null);
                 renderTotalsFromCache();
+                updateDocumentTitle();
             }
         }
 
@@ -418,6 +444,9 @@
             }
         }, 60 * 1000);
 
+        setInterval(updateDocumentTitle, 1000);
+        updateDocumentTitle();
+
         async function startTask(taskName) {
             try {
                 const workspaceId = await getDefaultWorkspaceId(apiToken);
@@ -451,6 +480,7 @@
                     : 0;
                 renderTotalsFromCache();
                 updateButtonStyles(taskName);
+                updateDocumentTitle();
             } catch (error) {
                 console.error('Error starting task:', error);
             }
@@ -471,6 +501,7 @@
                 currentTaskElapsedAtLastUpdateHours = 0;
                 renderTotalsFromCache();
                 updateButtonStyles(null);
+                updateDocumentTitle();
             } catch (error) {
                 console.error('Error stopping task:', error);
             }
