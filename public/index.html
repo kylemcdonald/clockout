@@ -78,6 +78,13 @@
                     'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
                 }
             });
+            if (response.status === 429) {
+                throw new Error('Rate limit exceeded while fetching projects');
+            }
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Failed to fetch projects (${response.status}): ${body}`);
+            }
             const data = await response.json();
             return parseProjects(data);
         });
@@ -95,6 +102,13 @@
                     'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
                 }
             });
+            if (response.status === 429) {
+                throw new Error('Rate limit exceeded while fetching time entries');
+            }
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Failed to fetch time entries (${response.status}): ${body}`);
+            }
             const data = await response.json();
             return data;
         }
@@ -211,6 +225,13 @@
                     "Authorization": "Basic " + btoa(`${apiToken}:api_token`)
                 },
             });
+            if (response.status === 429) {
+                throw new Error('Rate limit exceeded while fetching user');
+            }
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`Failed to fetch user (${response.status}): ${body}`);
+            }
             const data = await response.json();
             return data.default_workspace_id;
         }
@@ -237,6 +258,8 @@
                 });
             } catch (error) {
                 console.error('Error fetching projects:', error);
+                projects = [];
+                generateTaskContainers();
             }
         }
 
