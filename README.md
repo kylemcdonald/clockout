@@ -1,26 +1,29 @@
-# Toggl Time Tracking App
+# Clock-Out Time Tracking App
 
-A time tracking application that integrates with Toggl Track API to display project progress and manage time entries.
+A self-hosted time tracking application with SQLite backend for managing projects and time entries.
 
 ## Architecture
 
-This application has been refactored to move all business logic to the frontend, with the backend serving only as a CORS proxy.
+This application uses a SQLite database to store all data locally, with no external API dependencies.
 
 ### Frontend (Client-Side)
 - **Location**: `public/index.html`
 - **Technology**: Vanilla HTML/CSS/JavaScript
 - **Features**:
-  - All API calls to Toggl Track API
-  - Data processing and calculations
-  - Project parsing and time calculations
-  - Memoization for performance
-  - Real-time updates every minute
+  - Project progress visualization
+  - Real-time time tracking
+  - Settings modal for API key and project management
+  - History view for time entries
 
 ### Backend (Server-Side)
-- **Location**: `app.mjs` (or `app-simple.mjs`)
-- **Technology**: Express.js with proxy middleware
-- **Purpose**: CORS proxy only
-- **Endpoint**: `/proxy` - forwards requests to Toggl API
+- **Location**: `app.mjs`
+- **Technology**: Express.js with SQLite (better-sqlite3)
+- **Database**: SQLite (`clockout.db`)
+- **Features**:
+  - API key authentication
+  - Project management
+  - Time entry tracking
+  - Admin interface for API key management
 
 ## Setup
 
@@ -29,82 +32,108 @@ This application has been refactored to move all business logic to the frontend,
    npm install
    ```
 
-2. Start the server (choose one option):
-
-   **Option A: Using http-proxy-middleware (Recommended)**
+2. Start the server:
    ```bash
    npm start
    ```
 
-   **Option B: Using simple CORS proxy**
-   ```bash
-   npm run start:simple
-   ```
-
 3. Open your browser to `http://localhost:3000`
 
-## Proxy Options
+## Database Schema
 
-### Option A: http-proxy-middleware (`app.mjs`)
-- **Pros**: More robust, better error handling, optimized for proxying
-- **Cons**: Slightly more complex setup
-- **Best for**: Production environments
+The application uses SQLite with three main tables:
 
-### Option B: Simple CORS proxy (`app-simple.mjs`)
-- **Pros**: Minimal code, easy to understand, fewer dependencies
-- **Cons**: Less error handling, manual request forwarding
-- **Best for**: Development, simple use cases
+- **api_keys**: Stores API keys for user authentication
+- **projects**: Stores project names, target hours, and colors
+- **time_entries**: Stores time tracking entries with start/end times
 
 ## Usage
 
-1. Click the "Login" button in the top-right corner
-2. Enter your Toggl API token
-3. The app will display your projects with progress bars
-4. Click on any project to start tracking time
-5. The app updates automatically every minute
+### Getting Started
 
-## API Token
+1. **Generate an API Key**:
+   - Navigate to `/api` (password-protected admin interface)
+   - Enter the admin password (default: `admin123`, set via `ADMIN_PASSWORD` environment variable)
+   - Click "Generate New API Key"
+   - Copy the generated API key
 
-To get your Toggl API token:
-1. Log in to your Toggl account
-2. Go to Profile Settings
-3. Scroll down to "API Token"
-4. Copy the token and paste it in the app
+2. **Configure Your Account**:
+   - Click the settings button (⚙️) in the top-right corner
+   - Enter your API key
+   - Add projects with names and target hours
+   - Click "Save API Key"
 
-## Project Structure
+3. **Track Time**:
+   - Click on any project to start tracking time
+   - Click the same project again to stop tracking
+   - The app updates automatically every minute
 
-Projects should be named in the format: `ProjectName/TargetHours`
-Example: `Work/40`, `Exercise/5`, `Reading/10`
+4. **View History**:
+   - Navigate to `/history` to see all time entries for the last week
 
-The app will automatically parse these names and display progress bars based on the target hours.
+### Settings Modal
+
+The settings modal (⚙️ button) allows you to:
+- View and update your API key
+- Add new projects with target hours
+- Delete existing projects
+
+### Admin Interface
+
+The admin interface (`/api`) allows you to:
+- Generate new API keys
+- View all API keys
+- Delete API keys (this also deletes associated projects and time entries)
+
+**Default Admin Password**: `admin123`
+
+To change the admin password, set the `ADMIN_PASSWORD` environment variable:
+```bash
+ADMIN_PASSWORD=your-secure-password npm start
+```
+
+## API Endpoints
+
+### Public Endpoints
+- `GET /` - Main dashboard
+- `GET /history` - Time entry history page
+- `GET /api` - Admin interface
+
+### Authenticated Endpoints (require API key)
+- `GET /api/projects` - Get user's projects
+- `POST /api/projects` - Add a new project
+- `DELETE /api/projects/:id` - Delete a project
+- `GET /api/time-entries` - Get time entries (last week)
+- `GET /api/time-entries/current` - Get currently running time entry
+- `POST /api/time-entries` - Start a new time entry
+- `PATCH /api/time-entries/:id/stop` - Stop a time entry
+
+### Admin Endpoints (require admin password)
+- `GET /api/admin/keys` - List all API keys
+- `POST /api/admin/keys` - Generate new API key
+- `DELETE /api/admin/keys/:id` - Delete an API key
 
 ## Features
 
-- **Real-time Updates**: Automatically refreshes every minute
-- **Progress Visualization**: Visual progress bars for each project
-- **Time Tracking**: Start/stop time tracking for projects
-- **Untracked Time**: Shows remaining untracked hours in a week
+- **Multi-User Support**: Each API key represents a separate user
+- **Project Management**: Add projects with custom target hours
+- **Real-time Tracking**: Visual progress bars update in real-time
+- **Time History**: View all time entries for the past week
+- **Offline Capability**: All data stored locally in SQLite
 - **Responsive Design**: Works on desktop and mobile devices
-- **Offline Capability**: Caches data locally for better performance
 
 ## Technical Details
 
-### Frontend Functions
-- `memoize()`: Client-side caching for API responses
-- `parseProjects()`: Parses project names and target hours
-- `calculateTotalTimes()`: Calculates time totals from API data
-- `getProjects()`, `getTimeEntries()`: API calls to Toggl
-- `updateTotals()`, `updateUntrackedTime()`: UI update functions
+### Authentication
+- API keys are sent via `Authorization: Bearer <key>` header or `X-API-Key` header
+- Admin routes require password via `X-Admin-Password` header
 
-### Backend Proxy Options
-- **http-proxy-middleware**: Handles CORS issues with Toggl API, forwards all HTTP methods, preserves headers and request bodies
-- **Simple CORS proxy**: Basic request forwarding with CORS headers
+### Data Storage
+- All data is stored in `clockout.db` SQLite database
+- Database is created automatically on first run
+- Foreign key constraints ensure data integrity
 
-## Benefits of This Architecture
+## Environment Variables
 
-1. **Simplified Deployment**: Minimal server requirements
-2. **Better Performance**: Direct API calls, reduced server load
-3. **Easier Maintenance**: Single codebase for business logic
-4. **Offline Capability**: Can cache data locally
-5. **Reduced Infrastructure**: Lower server costs
-6. **Flexible Proxy Options**: Choose between robust or simple proxy implementation
+- `PORT` - Server port (default: 3000)
+- `ADMIN_PASSWORD` - Password for admin interface (default: `admin123`)

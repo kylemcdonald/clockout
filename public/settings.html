@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Settings - Clock-Out</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
+    <link rel="icon" href="icon.png" sizes="any">
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: auto;
+            min-height: 100%;
+            display: block;
+            overflow: visible;
+            overflow-y: auto;
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        .settings-container {
+            max-width: 600px;
+            margin: 80px auto 20px;
+            padding: 20px;
+            color: white;
+        }
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .settings-header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: normal;
+            color: white;
+        }
+        .settings-container h2 {
+            margin-top: 0;
+            margin-bottom: 1.5em;
+            font-size: 1.5em;
+            font-weight: normal;
+            color: white;
+        }
+        .settings-container h3 {
+            margin-top: 2em;
+            margin-bottom: 1em;
+            font-size: 1.2em;
+            font-weight: normal;
+            color: white;
+        }
+        .settings-section {
+            margin-bottom: 2em;
+        }
+        .settings-section label {
+            display: block;
+            margin-bottom: 0.75em;
+            font-weight: bold;
+            color: white;
+        }
+        .settings-container input {
+            display: block;
+            margin: 0.75em 0;
+            padding: 0.875em 1em;
+            width: calc(100% - 2em);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 6px;
+            font-size: 1em;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        .settings-container input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+        .settings-container button {
+            padding: 0.875em 1.25em;
+            margin: 0.75em 0;
+            font-size: 1em;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        .settings-container button:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        .add-project-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75em;
+            margin-top: 1.5em;
+        }
+        .add-project-form input {
+            width: calc(100% - 1.5em);
+        }
+        .project-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 1.25em 1.5em;
+            margin: 0.875em 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            flex-wrap: wrap;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        .project-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            flex-wrap: nowrap;
+            gap: 1em;
+        }
+        .project-name-colored {
+            display: inline-block;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .delete-btn {
+            background-color: rgba(220, 53, 69, 0.8);
+            padding: 0.625em;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            min-height: 40px;
+            border-radius: 6px;
+        }
+        .delete-btn:hover {
+            background-color: rgba(200, 35, 51, 0.9);
+        }
+        .delete-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+        .edit-btn {
+            background-color: rgba(59, 130, 246, 0.8);
+            padding: 0.625em;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            min-height: 40px;
+            border-radius: 6px;
+        }
+        .edit-btn:hover {
+            background-color: rgba(37, 99, 235, 0.9);
+        }
+        .edit-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+        .visibility-btn {
+            background-color: rgba(107, 114, 128, 0.8);
+            padding: 0.625em;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            min-height: 40px;
+            border-radius: 6px;
+        }
+        .visibility-btn:hover {
+            background-color: rgba(75, 85, 99, 0.9);
+        }
+        .visibility-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+        .visibility-btn.invisible {
+            background-color: rgba(156, 163, 175, 0.6);
+        }
+        .visibility-btn.invisible:hover {
+            background-color: rgba(107, 114, 128, 0.8);
+        }
+        .project-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+        .edit-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75em;
+            margin-top: 1em;
+            padding: 1.25em;
+            background-color: rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            width: 100%;
+            flex-basis: 100%;
+            min-width: 0;
+            max-width: 100%;
+            box-sizing: border-box;
+            order: 999;
+        }
+        .edit-form input {
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        .edit-form-buttons {
+            display: flex;
+            gap: 0.75em;
+            margin-top: 0.25em;
+        }
+        .edit-form-buttons button {
+            flex: 1;
+        }
+        .save-btn {
+            background-color: rgba(34, 197, 94, 0.8);
+        }
+        .save-btn:hover {
+            background-color: rgba(22, 163, 74, 0.9);
+        }
+        .cancel-btn {
+            background-color: rgba(107, 114, 128, 0.8);
+        }
+        .cancel-btn:hover {
+            background-color: rgba(75, 85, 99, 0.9);
+        }
+        .page-nav {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1001;
+            display: flex;
+            gap: 10px;
+        }
+        .page-nav a {
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            border-radius: 15px;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .page-nav a:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page-nav">
+        <a href="/" title="Track">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
+                <path fill-rule="evenodd" d="M3 6a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3V6ZM3 15.75a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-2.25Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3v-2.25Z" clip-rule="evenodd"/>
+            </svg>
+        </a>
+        <a href="/history" title="History">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
+                <path fill-rule="evenodd" d="M6.75 2.25A.75.75 0 0 1 7.5 3v1.5h9V3A.75.75 0 0 1 18 3v1.5h.75a3 3 0 0 1 3 3v11.25a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3H6V3a.75.75 0 0 1 .75-.75Zm13.5 9a1.5 1.5 0 0 0-1.5-1.5H5.25a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5v-7.5Z" clip-rule="evenodd"/>
+            </svg>
+        </a>
+        <a href="/settings" title="Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
+                <path fill-rule="evenodd" d="M12 6.75a5.25 5.25 0 0 1 6.775-5.025.75.75 0 0 1 .313 1.248l-3.32 3.319c.063.475.276.934.641 1.299.365.365.824.578 1.3.64l3.318-3.319a.75.75 0 0 1 1.248.313 5.25 5.25 0 0 1-5.472 6.756c-1.018-.086-1.87.1-2.309.634L7.344 21.3A3.298 3.298 0 1 1 2.7 16.657l8.684-7.151c.533-.44.72-1.291.634-2.309A5.342 5.342 0 0 1 12 6.75ZM4.117 19.125a.75.75 0 0 1 .75-.75h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1-.75-.75v-.008Z" clip-rule="evenodd"/>
+            </svg>
+        </a>
+    </div>
+    <div class="settings-container">
+        <div class="settings-header">
+            <h1>Settings</h1>
+        </div>
+        <div class="settings-section">
+            <label>API Key:</label>
+            <input type="text" id="apiToken" placeholder="Enter your API key">
+            <button onclick="saveApiKey()">Save API Key</button>
+        </div>
+        <div class="settings-section">
+            <h3>Projects</h3>
+            <div id="projectsList"></div>
+            <div class="add-project-form">
+                <input type="text" id="newProjectName" placeholder="Project name">
+                <input type="number" id="newProjectHours" placeholder="Target hours" step="0.1" min="0">
+                <button onclick="addProject()">Add Project</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        let apiToken = getCookie('apiToken') || '';
+
+        function getApiHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiToken}`,
+                'X-API-Key': apiToken
+            };
+        }
+
+        function getCookie(name) {
+            const cname = name + "=";
+            const decodedCookie = decodeURIComponent(document.cookie);
+            const ca = decodedCookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') {
+                    c = c.substring(1);
+                }
+                if (c.indexOf(cname) === 0) {
+                    return c.substring(cname.length, c.length);
+                }
+            }
+            return "";
+        }
+
+        function setCookie(name, value, days) {
+            const d = new Date();
+            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+            const expires = "expires=" + d.toUTCString();
+            document.cookie = name + "=" + value + ";" + expires + ";path=/";
+        }
+
+        function saveApiKey() {
+            apiToken = document.getElementById('apiToken').value.trim();
+            setCookie('apiToken', apiToken, 365);
+            loadProjectsList();
+        }
+
+        async function loadProjectsList() {
+            if (!apiToken) {
+                document.getElementById('projectsList').innerHTML = '<p>Please enter an API key first.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/projects?include_hidden=true', {
+                    headers: getApiHeaders()
+                });
+
+                if (response.status === 401) {
+                    document.getElementById('projectsList').innerHTML = '<p style="color: red;">Invalid API key.</p>';
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load projects: ${response.status}`);
+                }
+
+                const projectsList = await response.json();
+                const projectsHtml = projectsList.map(project => {
+                    const projectColor = project.color || '#D15540';
+                    const projectNameStyle = `background-color: ${projectColor};`;
+                    const isVisible = project.visible !== 0 && project.visible !== null;
+                    const visibilityClass = isVisible ? '' : 'invisible';
+                    const visibilityTitle = isVisible ? 'Hide project' : 'Show project';
+                    return `
+                    <div class="project-item" id="project-item-${project.id}">
+                        <div class="project-item-header">
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                <span class="project-name-colored" style="${projectNameStyle}">${project.name}</span>
+                                <span style="font-size: 0.95em; opacity: 0.9;">${project.target_hours} hours</span>
+                            </div>
+                            <div class="project-actions">
+                                <button class="visibility-btn ${visibilityClass}" onclick="toggleVisibility(${project.id}, ${isVisible ? 0 : 1})" title="${visibilityTitle}">
+                                    ${isVisible ? `
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+                                        <path fill-rule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 0 1 0-1.113ZM17.25 12a5.25 5.25 0 1 1-10.5 0 5.25 5.25 0 0 1 10.5 0Z" clip-rule="evenodd" />
+                                    </svg>
+                                    ` : `
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6">
+                                        <path d="M3.53 2.47a.75.75 0 0 0-1.06 1.06l18 18a.75.75 0 1 0 1.06-1.06l-18-18ZM22.676 12.553a11.249 11.249 0 0 1-2.631 4.31l-3.099-3.099a5.25 5.25 0 0 0-6.71-6.71L7.759 4.577a11.217 11.217 0 0 1 4.242-.827c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113Z" />
+                                        <path d="M15.75 12c0 .18-.013.357-.037.53l-4.244-4.243A3.75 3.75 0 0 1 15.75 12ZM12.53 15.713l-4.243-4.244a3.75 3.75 0 0 0 4.244 4.243Z" />
+                                        <path d="M6.75 12c0-.619.107-1.213.304-1.764l-3.1-3.1a11.25 11.25 0 0 0-2.63 4.31c-.12.362-.12.752 0 1.114 1.489 4.467 5.704 7.69 10.675 7.69 1.5 0 2.933-.294 4.242-.827l-2.477-2.477A5.25 5.25 0 0 1 6.75 12Z" />
+                                    </svg>
+                                    `}
+                                </button>
+                                <button class="edit-btn" data-project-id="${project.id}" data-project-name="${project.name.replace(/"/g, '&quot;')}" data-project-hours="${project.target_hours}" title="Edit project">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M21.731 2.269a2.625 2.625 0 0 0-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 0 0 0-3.712ZM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 0 0-1.32 2.214l-.8 2.685a.75.75 0 0 0 .933.933l2.685-.8a5.25 5.25 0 0 0 2.214-1.32l8.4-8.4Z" />
+                                        <path d="M5.25 5.25a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3V13.5a.75.75 0 0 0-1.5 0v5.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5V8.25a1.5 1.5 0 0 1 1.5-1.5h5.25a.75.75 0 0 0 0-1.5H5.25Z" />
+                                    </svg>
+                                </button>
+                                <button onclick="deleteProject(${project.id})" class="delete-btn" title="Delete project">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-.355 5.945a.75.75 0 1 0-1.5.058l.347 9a.75.75 0 1 0 1.499-.058l-.346-9Zm5.48.058a.75.75 0 1 0-1.498-.058l-.347 9a.75.75 0 0 0 1.5.058l.345-9Z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                }).join('');
+
+                document.getElementById('projectsList').innerHTML = projectsHtml || '<p>No projects yet. Add one below.</p>';
+                
+                // Attach event listeners to edit buttons
+                document.querySelectorAll('.edit-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const projectId = parseInt(this.getAttribute('data-project-id'));
+                        const projectName = this.getAttribute('data-project-name');
+                        const projectHours = parseFloat(this.getAttribute('data-project-hours'));
+                        editProject(projectId, projectName, projectHours);
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading projects:', error);
+                document.getElementById('projectsList').innerHTML = '<p style="color: red;">Error loading projects.</p>';
+            }
+        }
+
+        async function addProject() {
+            const name = document.getElementById('newProjectName').value.trim();
+            const hours = parseFloat(document.getElementById('newProjectHours').value);
+
+            if (!name || isNaN(hours) || hours <= 0) {
+                alert('Please enter a valid project name and target hours.');
+                return;
+            }
+
+            if (!apiToken) {
+                alert('Please enter an API key first.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/projects', {
+                    method: 'POST',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({
+                        name: name,
+                        target_hours: hours
+                    })
+                });
+
+                if (response.status === 401) {
+                    alert('Invalid API key.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to add project.');
+                    return;
+                }
+
+                document.getElementById('newProjectName').value = '';
+                document.getElementById('newProjectHours').value = '';
+                loadProjectsList();
+            } catch (error) {
+                console.error('Error adding project:', error);
+                alert('Error adding project.');
+            }
+        }
+
+        function editProject(projectId, currentName, currentHours) {
+            console.log('editProject called', projectId, currentName, currentHours);
+            const projectItem = document.getElementById(`project-item-${projectId}`);
+            if (!projectItem) {
+                console.error('Project item not found:', `project-item-${projectId}`);
+                return;
+            }
+
+            // Check if already in edit mode
+            if (projectItem.querySelector('.edit-form')) {
+                return;
+            }
+
+            // Create edit form
+            const editForm = document.createElement('div');
+            editForm.className = 'edit-form';
+            
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.id = `edit-project-name-${projectId}`;
+            nameInput.value = currentName;
+            nameInput.placeholder = 'Project name';
+            
+            const hoursInput = document.createElement('input');
+            hoursInput.type = 'number';
+            hoursInput.id = `edit-project-hours-${projectId}`;
+            hoursInput.value = currentHours;
+            hoursInput.placeholder = 'Target hours';
+            hoursInput.step = '0.1';
+            hoursInput.min = '0';
+            
+            const buttonsDiv = document.createElement('div');
+            buttonsDiv.className = 'edit-form-buttons';
+            
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'save-btn';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = () => saveProject(projectId);
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'cancel-btn';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = () => cancelEdit(projectId);
+            
+            buttonsDiv.appendChild(saveBtn);
+            buttonsDiv.appendChild(cancelBtn);
+            
+            editForm.appendChild(nameInput);
+            editForm.appendChild(hoursInput);
+            editForm.appendChild(buttonsDiv);
+
+            // Append form to the end of the project item
+            projectItem.appendChild(editForm);
+        }
+
+        function cancelEdit(projectId) {
+            const projectItem = document.getElementById(`project-item-${projectId}`);
+            if (!projectItem) return;
+
+            const editForm = projectItem.querySelector('.edit-form');
+            if (editForm) {
+                editForm.remove();
+            }
+        }
+
+        async function saveProject(projectId) {
+            const nameInput = document.getElementById(`edit-project-name-${projectId}`);
+            const hoursInput = document.getElementById(`edit-project-hours-${projectId}`);
+
+            if (!nameInput || !hoursInput) {
+                return;
+            }
+
+            const name = nameInput.value.trim();
+            const hours = parseFloat(hoursInput.value);
+
+            if (!name || isNaN(hours) || hours <= 0) {
+                alert('Please enter a valid project name and target hours.');
+                return;
+            }
+
+            if (!apiToken) {
+                alert('Please enter an API key first.');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/projects/${projectId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({
+                        name: name,
+                        target_hours: hours
+                    })
+                });
+
+                if (response.status === 401) {
+                    alert('Invalid API key.');
+                    return;
+                }
+
+                if (response.status === 409) {
+                    alert('A project with this name already exists.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to update project.');
+                    return;
+                }
+
+                loadProjectsList();
+            } catch (error) {
+                console.error('Error updating project:', error);
+                alert('Error updating project.');
+            }
+        }
+
+        async function toggleVisibility(projectId, newVisibility) {
+            if (!apiToken) {
+                alert('Please enter an API key first.');
+                return;
+            }
+
+            try {
+                // First get the project to update (include hidden projects)
+                const getResponse = await fetch(`/api/projects?include_hidden=true`, {
+                    headers: getApiHeaders()
+                });
+                
+                if (getResponse.status === 401) {
+                    alert('Invalid API key.');
+                    return;
+                }
+
+                if (!getResponse.ok) {
+                    throw new Error('Failed to fetch project');
+                }
+
+                const projects = await getResponse.json();
+                const project = projects.find(p => p.id === projectId);
+                
+                if (!project) {
+                    alert('Project not found.');
+                    return;
+                }
+
+                const response = await fetch(`/api/projects/${projectId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({
+                        name: project.name,
+                        target_hours: project.target_hours,
+                        visible: newVisibility
+                    })
+                });
+
+                if (response.status === 401) {
+                    alert('Invalid API key.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to toggle visibility.');
+                    return;
+                }
+
+                loadProjectsList();
+            } catch (error) {
+                console.error('Error toggling visibility:', error);
+                alert('Error toggling visibility.');
+            }
+        }
+
+        async function deleteProject(projectId) {
+            if (!confirm('Are you sure you want to delete this project?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/projects/${projectId}`, {
+                    method: 'DELETE',
+                    headers: getApiHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to delete project');
+                }
+
+                loadProjectsList();
+            } catch (error) {
+                console.error('Error deleting project:', error);
+                alert('Error deleting project.');
+            }
+        }
+
+        // Load API token and projects on page load
+        document.getElementById('apiToken').value = apiToken;
+        if (apiToken) {
+            loadProjectsList();
+        }
+    </script>
+</body>
+
+</html>
+

@@ -13,18 +13,29 @@
 </head>
 
 <body>
+    <div class="page-nav">
+        <a href="/" title="Track">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
+                <path fill-rule="evenodd" d="M3 6a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3V6ZM3 15.75a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-2.25Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3v-2.25Z" clip-rule="evenodd"/>
+            </svg>
+        </a>
+        <a href="/history" title="History">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
+                <path fill-rule="evenodd" d="M6.75 2.25A.75.75 0 0 1 7.5 3v1.5h9V3A.75.75 0 0 1 18 3v1.5h.75a3 3 0 0 1 3 3v11.25a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3H6V3a.75.75 0 0 1 .75-.75Zm13.5 9a1.5 1.5 0 0 0-1.5-1.5H5.25a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5v-7.5Z" clip-rule="evenodd"/>
+            </svg>
+        </a>
+        <a href="/settings" title="Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
+                <path fill-rule="evenodd" d="M12 6.75a5.25 5.25 0 0 1 6.775-5.025.75.75 0 0 1 .313 1.248l-3.32 3.319c.063.475.276.934.641 1.299.365.365.824.578 1.3.64l3.318-3.319a.75.75 0 0 1 1.248.313 5.25 5.25 0 0 1-5.472 6.756c-1.018-.086-1.87.1-2.309.634L7.344 21.3A3.298 3.298 0 1 1 2.7 16.657l8.684-7.151c.533-.44.72-1.291.634-2.309A5.342 5.342 0 0 1 12 6.75ZM4.117 19.125a.75.75 0 0 1 .75-.75h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1-.75-.75v-.008Z" clip-rule="evenodd"/>
+            </svg>
+        </a>
+    </div>
     <div id="untrackedIndicator" class="untracked-indicator">
         <span id="untrackedText">--:--</span>
     </div>
     <div class="grid" id="taskGrid"></div>
-    <button id="loginBtn">Login</button>
-    <div class="modal" id="loginModal">
-        <input type="text" id="apiToken" placeholder="API Token">
-        <button onclick="saveCredentials()">Save</button>
-    </div>
     <script>
         let projects = [];
-        const colors = ['#D15540', '#9E9A2F', '#D88045', '#D7524E', '#3fc30f', '#5EB868', '#439D43', '#9F509F'];
         let currentTaskId = null;
         let currentTaskStartTime = null;
         let currentTaskName = null;
@@ -36,106 +47,12 @@
         const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
         const DEFAULT_TITLE = document.title;
         let apiToken = getCookie('apiToken') || '';
-        document.getElementById('apiToken').value = apiToken;
 
-        // Backend logic moved to frontend
-        function memoize(func) {
-            const cache = {};
-            return async function(...args) {
-                let forceUpdate = false;
-                if (typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null) {
-                    const options = args.pop();
-                    forceUpdate = options.forceUpdate === true;
-                }
-                const key = JSON.stringify(args);
-                if (!forceUpdate && cache[key]) {
-                    return cache[key];
-                }
-                const result = await func(...args);
-                cache[key] = result;
-                return result;
-            };
-        }
-
-        function parseProjects(projects) {
-            return projects
-                .filter(project => project.name.includes('/'))
-                .map(project => {
-                    const [name, targetTime] = project.name.split('/');
-                    return {
-                        id: project.id,
-                        name: name,
-                        targetTime: parseInt(targetTime, 10),
-                        color: project.color
-                    };
-                })
-                .sort((a, b) => b.targetTime - a.targetTime);
-        }
-
-        const getProjects = memoize(async (apiToken, workspaceId) => {
-            const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/projects`)}`, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
-                }
-            });
-            if (response.status === 429) {
-                throw new Error('Rate limit exceeded while fetching projects');
-            }
-            if (!response.ok) {
-                const body = await response.text();
-                throw new Error(`Failed to fetch projects (${response.status}): ${body}`);
-            }
-            const data = await response.json();
-            return parseProjects(data);
-        });
-
-        async function getTimeEntries(apiToken) {
-            const now = new Date();
-            const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-            const start_date = oneWeekAgo.toISOString();
-            const end_date = now.toISOString();
-            
-            const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/me/time_entries?start_date=${start_date}&end_date=${end_date}`)}`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
-                }
-            });
-            if (response.status === 429) {
-                throw new Error('Rate limit exceeded while fetching time entries');
-            }
-            if (!response.ok) {
-                const body = await response.text();
-                throw new Error(`Failed to fetch time entries (${response.status}): ${body}`);
-            }
-            const data = await response.json();
-            return data;
-        }
-
-        function calculateTotalTimes(events) {
-            let totalHours = 0;
-            let projectTimes = {};
-
-            events.forEach(event => {
-                let duration = event.duration;
-                if (duration < 0) {
-                    const start = new Date(event.start);
-                    duration = (new Date().getTime() - start.getTime()) / 1000;
-                }
-                let durationHours = duration / 3600;
-                totalHours += durationHours;
-                if (projectTimes[event.project_id]) {
-                    projectTimes[event.project_id] += durationHours;
-                } else {
-                    projectTimes[event.project_id] = durationHours;
-                }
-            });
-
+        function getApiHeaders() {
             return {
-                total: totalHours,
-                projects: projectTimes
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiToken}`,
+                'X-API-Key': apiToken
             };
         }
 
@@ -155,7 +72,7 @@
 
         function renderProjectTotals(projectTotals) {
             projects.forEach(project => {
-                const target = project.targetTime;
+                const target = project.target_hours || project.targetTime;
                 const total = projectTotals[project.name] || 0;
                 const ratio = Math.max(0, Math.min(total / target, 2));
                 const label = document.getElementById(project.name);
@@ -228,53 +145,38 @@
             renderUntracked(totalHours);
         }
 
-        async function getProjectId(apiToken, workspaceId, projectName) {
-            const data = await getProjects(apiToken, workspaceId);
-            const project = data.find(p => p.name === projectName);
-            return project.id;
-        }
-
-        async function getProjectName(apiToken, workspaceId, projectId) {
-            const data = await getProjects(apiToken, workspaceId);
-            const project = data.find(p => p.id == projectId);
-            return project ? project.name : null;
-        }
-
-        async function getDefaultWorkspaceId(apiToken) {
-            const response = await fetch(`/proxy?url=${encodeURIComponent("https://api.track.toggl.com/api/v9/me")}`, {
-                method: "GET",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": "Basic " + btoa(`${apiToken}:api_token`)
-                },
-            });
-            if (response.status === 429) {
-                throw new Error('Rate limit exceeded while fetching user');
-            }
-            if (!response.ok) {
-                const body = await response.text();
-                throw new Error(`Failed to fetch user (${response.status}): ${body}`);
-            }
-            const data = await response.json();
-            return data.default_workspace_id;
-        }
-
-        // Frontend UI logic
-        document.getElementById('loginBtn').addEventListener('click', () => {
-            document.getElementById('loginModal').style.display = 'block';
-        });
-
-        function saveCredentials() {
-            apiToken = document.getElementById('apiToken').value;
-            setCookie('apiToken', apiToken, 365);
-            document.getElementById('loginModal').style.display = 'none';
-            fetchProjects();
-        }
 
         async function fetchProjects() {
+            if (!apiToken) {
+                projects = [];
+                generateTaskContainers();
+                return;
+            }
+
             try {
-                const workspaceId = await getDefaultWorkspaceId(apiToken);
-                projects = await getProjects(apiToken, workspaceId, { forceUpdate: true });
+                const response = await fetch('/api/projects', {
+                    headers: getApiHeaders()
+                });
+
+                if (response.status === 401) {
+                    console.error('Invalid API key');
+                    projects = [];
+                    generateTaskContainers();
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch projects: ${response.status}`);
+                }
+
+                const data = await response.json();
+                projects = data.map(project => ({
+                    id: project.id,
+                    name: project.name,
+                    targetTime: project.target_hours,
+                    color: project.color || '#D15540'
+                })).sort((a, b) => b.targetTime - a.targetTime);
+
                 generateTaskContainers();
                 getCurrentTask().then(() => {
                     updateTotals();
@@ -288,20 +190,18 @@
 
         function generateTaskContainers() {
             const taskGrid = document.getElementById('taskGrid');
-            taskGrid.innerHTML = ''; // Clear existing containers
-            
-            // Calculate total target hours
+            taskGrid.innerHTML = '';
+
             const totalTargetHours = projects.reduce((sum, project) => sum + project.targetTime, 0);
             console.log(`Total target hours: ${totalTargetHours}`);
-            
+
             if (totalTargetHours !== 168) {
                 console.warn(`Warning: Total target hours (${totalTargetHours}) is not equal to 168.`);
             }
 
-            // Determine the appropriate grid layout
             const isPortrait = window.innerHeight > window.innerWidth;
             const projectCount = projects.length;
-            
+
             if (isPortrait) {
                 if (projectCount > 12) {
                     taskGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
@@ -319,11 +219,11 @@
                     taskGrid.style.gridTemplateRows = 'repeat(3, 1fr)';
                 }
             }
-            
-            projects.forEach((project, index) => {
+
+            projects.forEach((project) => {
                 const container = document.createElement('div');
                 container.className = 'container';
-                container.onclick = () => startTask(project.name);
+                container.onclick = () => startTask(project.id, project.name);
 
                 const fill = document.createElement('div');
                 fill.className = 'fill';
@@ -347,28 +247,33 @@
         }
 
         async function getCurrentTask() {
+            if (!apiToken) {
+                currentTaskId = null;
+                currentTaskName = null;
+                currentTaskStartTime = null;
+                currentTaskElapsedAtLastUpdateHours = 0;
+                updateButtonStyles(null);
+                renderTotalsFromCache();
+                updateDocumentTitle();
+                return;
+            }
+
             try {
-                const workspaceId = await getDefaultWorkspaceId(apiToken);
-                const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/me/time_entries/current`)}`, {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
-                    }
+                const response = await fetch('/api/time-entries/current', {
+                    headers: getApiHeaders()
                 });
-                if (response.status === 429) {
-                    console.warn('Rate limit hit when fetching current task');
-                    renderTotalsFromCache();
-                    return;
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
                 }
+
                 if (!response.ok) {
                     throw new Error(`Failed to fetch current task: ${response.status}`);
                 }
-                const raw = await response.text();
-                const data = raw ? JSON.parse(raw) : null;
+
+                const data = await response.json();
                 if (data && data.id) {
                     currentTaskId = data.id;
-                    data.name = await getProjectName(apiToken, workspaceId, data.project_id);
                     currentTaskName = data.name;
                     currentTaskStartTime = data.start ? new Date(data.start) : null;
                     if (currentTaskStartTime && totalsLastUpdatedAt) {
@@ -404,25 +309,48 @@
         }
 
         async function updateTotals() {
-            if (totalsUpdateInFlight) {
+            if (totalsUpdateInFlight || !apiToken) {
                 return;
             }
             totalsUpdateInFlight = true;
             try {
-                const workspaceId = await getDefaultWorkspaceId(apiToken);
-                const timeEntries = await getTimeEntries(apiToken);
-                const totalTimes = calculateTotalTimes(timeEntries);
-                const byProjectId = totalTimes.projects;
-                const byProjectName = {};
-                for (let projectId in byProjectId) {
-                    const projectName = await getProjectName(apiToken, workspaceId, projectId);
-                    if (!projectName) {
-                        continue;
-                    }
-                    byProjectName[projectName] = byProjectId[projectId];
+                const response = await fetch('/api/time-entries', {
+                    headers: getApiHeaders()
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
                 }
-                cachedProjectTotals = byProjectName;
-                cachedTotalHours = totalTimes.total;
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch time entries: ${response.status}`);
+                }
+
+                const timeEntries = await response.json();
+                
+                let totalHours = 0;
+                let projectTimes = {};
+
+                timeEntries.forEach(entry => {
+                    let duration = entry.duration;
+                    if (duration < 0) {
+                        const start = new Date(entry.start);
+                        duration = (new Date().getTime() - start.getTime()) / 1000;
+                    }
+                    let durationHours = duration / 3600;
+                    totalHours += durationHours;
+                    const projectName = entry.name;
+                    if (projectName) {
+                        if (projectTimes[projectName]) {
+                            projectTimes[projectName] += durationHours;
+                        } else {
+                            projectTimes[projectName] = durationHours;
+                        }
+                    }
+                });
+
+                cachedProjectTotals = projectTimes;
+                cachedTotalHours = totalHours;
                 totalsLastUpdatedAt = Date.now();
                 if (currentTaskStartTime) {
                     currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
@@ -447,54 +375,76 @@
         setInterval(updateDocumentTitle, 1000);
         updateDocumentTitle();
 
-        async function startTask(taskName) {
+        async function startTask(projectId, projectName) {
+            if (!apiToken) {
+                alert('Please enter an API key in settings first.');
+                return;
+            }
+
+            // If clicking the same task that's running, stop it
+            if (currentTaskId && currentTaskName === projectName) {
+                await stopCurrentTask();
+                return;
+            }
+
             try {
-                const workspaceId = await getDefaultWorkspaceId(apiToken);
-                const projectId = await getProjectId(apiToken, workspaceId, taskName);
-                const response = await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries`)}`, {
+                const response = await fetch('/api/time-entries', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
-                    },
+                    headers: getApiHeaders(),
                     body: JSON.stringify({
-                        created_with: 'iPad',
-                        tags: [],
-                        project_id: parseInt(projectId),
-                        billable: false,
-                        workspace_id: parseInt(workspaceId),
-                        duration: -1,
-                        start: new Date().toISOString(),
-                        stop: null
+                        project_id: projectId
                     })
                 });
+
+                if (response.status === 401) {
+                    alert('Invalid API key.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to start task.');
+                    return;
+                }
+
                 const data = await response.json();
                 currentTaskId = data.id;
-                currentTaskName = taskName;
+                currentTaskName = projectName;
                 currentTaskStartTime = data.start ? new Date(data.start) : new Date();
-                if (!(taskName in cachedProjectTotals)) {
-                    cachedProjectTotals[taskName] = cachedProjectTotals[taskName] || 0;
+                if (!(projectName in cachedProjectTotals)) {
+                    cachedProjectTotals[projectName] = 0;
                 }
                 currentTaskElapsedAtLastUpdateHours = totalsLastUpdatedAt && currentTaskStartTime
                     ? Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000)
                     : 0;
                 renderTotalsFromCache();
-                updateButtonStyles(taskName);
+                updateButtonStyles(projectName);
                 updateDocumentTitle();
             } catch (error) {
                 console.error('Error starting task:', error);
+                alert('Error starting task.');
             }
         }
 
         async function stopCurrentTask() {
+            if (!apiToken || !currentTaskId) {
+                return;
+            }
+
             try {
-                const workspaceId = await getDefaultWorkspaceId(apiToken);
-                await fetch(`/proxy?url=${encodeURIComponent(`https://api.track.toggl.com/api/v9/workspaces/${workspaceId}/time_entries/${currentTaskId}/stop`)}`, {
+                const response = await fetch(`/api/time-entries/${currentTaskId}/stop`, {
                     method: 'PATCH',
-                    headers: {
-                        'Authorization': 'Basic ' + btoa(`${apiToken}:api_token`)
-                    }
+                    headers: getApiHeaders()
                 });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to stop task');
+                }
+
                 currentTaskId = null;
                 currentTaskName = null;
                 currentTaskStartTime = null;
@@ -504,6 +454,7 @@
                 updateDocumentTitle();
             } catch (error) {
                 console.error('Error stopping task:', error);
+                alert('Error stopping task.');
             }
         }
 
@@ -543,8 +494,6 @@
         }
 
         if (apiToken) {
-            // get login button and set opacity to 0.5
-            document.getElementById('loginBtn').style.opacity = '0.25';
             fetchProjects();
         }
     </script>
