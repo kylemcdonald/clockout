@@ -210,6 +210,35 @@
             color: rgba(255, 255, 255, 0.7);
             font-size: 0.9em;
         }
+        .time-adjust-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .add-time-button,
+        .remove-time-button,
+        .snap-to-hour-button {
+            padding: 10px 20px;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.95em;
+            flex: 1;
+            max-width: 200px;
+        }
+        .add-time-button:hover,
+        .remove-time-button:hover,
+        .snap-to-hour-button:hover {
+            background-color: rgba(255, 255, 255, 0.15);
+        }
+        .add-time-button:disabled,
+        .remove-time-button:disabled,
+        .snap-to-hour-button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
         .page-nav {
             position: fixed;
             top: 10px;
@@ -256,6 +285,11 @@
     <div class="history-container">
         <div class="history-header">
             <h1>Time Entry History</h1>
+        </div>
+        <div class="time-adjust-buttons">
+            <button class="add-time-button" id="addTimeButton" onclick="addTenMinutes()">Add 10 Minutes</button>
+            <button class="remove-time-button" id="removeTimeButton" onclick="removeTenMinutes()">Remove 10 Minutes</button>
+            <button class="snap-to-hour-button" id="snapToHourButton" onclick="snapToHour()">Snap to Hour</button>
         </div>
         <div id="errorMessage" style="display: none;"></div>
         <div id="loadingMessage" class="loading">Loading time entries...</div>
@@ -682,6 +716,282 @@
                 renderEntries();
                 // Scroll to top of entries list
                 document.getElementById('timeEntriesList').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        async function addTenMinutes() {
+            const button = document.getElementById('addTimeButton');
+            button.disabled = true;
+
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                alert('No API key found. Please go to settings and enter your API key.');
+                button.disabled = false;
+                return;
+            }
+
+            try {
+                // Get the current (most recent) and previous time entries
+                if (allEntries.length === 0) {
+                    alert('No time entries found.');
+                    button.disabled = false;
+                    return;
+                }
+
+                const currentEntry = allEntries[0]; // Most recent entry
+                const previousEntry = allEntries.length > 1 ? allEntries[1] : null;
+
+                if (!currentEntry) {
+                    alert('No current time entry found.');
+                    button.disabled = false;
+                    return;
+                }
+
+                // Calculate new times (subtract 10 minutes = 600000 milliseconds)
+                const currentStartTime = new Date(currentEntry.start);
+                const newCurrentStartTime = new Date(currentStartTime.getTime() - 10 * 60 * 1000);
+
+                // Update current entry's start time
+                const currentResponse = await fetch(`/api/time-entries/${currentEntry.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        start_time: newCurrentStartTime.toISOString()
+                    })
+                });
+
+                if (currentResponse.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!currentResponse.ok) {
+                    const errorData = await currentResponse.json();
+                    throw new Error(errorData.error || `Failed to update current time entry: ${currentResponse.status}`);
+                }
+
+                // Update previous entry's end time if it exists
+                if (previousEntry && previousEntry.stop) {
+                    const previousEndTime = new Date(previousEntry.stop);
+                    const newPreviousEndTime = new Date(previousEndTime.getTime() - 10 * 60 * 1000);
+
+                    const previousResponse = await fetch(`/api/time-entries/${previousEntry.id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                            'X-API-Key': apiKey
+                        },
+                        body: JSON.stringify({
+                            end_time: newPreviousEndTime.toISOString()
+                        })
+                    });
+
+                    if (previousResponse.status === 401) {
+                        throw new Error('Invalid API key');
+                    }
+
+                    if (!previousResponse.ok) {
+                        const errorData = await previousResponse.json();
+                        throw new Error(errorData.error || `Failed to update previous time entry: ${previousResponse.status}`);
+                    }
+                }
+
+                // Reload entries to show updated times
+                await loadTimeEntries();
+
+            } catch (error) {
+                console.error('Error adding 10 minutes:', error);
+                alert(`Error adding 10 minutes: ${error.message}`);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function removeTenMinutes() {
+            const button = document.getElementById('removeTimeButton');
+            button.disabled = true;
+
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                alert('No API key found. Please go to settings and enter your API key.');
+                button.disabled = false;
+                return;
+            }
+
+            try {
+                // Get the current (most recent) and previous time entries
+                if (allEntries.length === 0) {
+                    alert('No time entries found.');
+                    button.disabled = false;
+                    return;
+                }
+
+                const currentEntry = allEntries[0]; // Most recent entry
+                const previousEntry = allEntries.length > 1 ? allEntries[1] : null;
+
+                if (!currentEntry) {
+                    alert('No current time entry found.');
+                    button.disabled = false;
+                    return;
+                }
+
+                // Calculate new times (add 10 minutes = 600000 milliseconds)
+                const currentStartTime = new Date(currentEntry.start);
+                const newCurrentStartTime = new Date(currentStartTime.getTime() + 10 * 60 * 1000);
+
+                // Update current entry's start time
+                const currentResponse = await fetch(`/api/time-entries/${currentEntry.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        start_time: newCurrentStartTime.toISOString()
+                    })
+                });
+
+                if (currentResponse.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!currentResponse.ok) {
+                    const errorData = await currentResponse.json();
+                    throw new Error(errorData.error || `Failed to update current time entry: ${currentResponse.status}`);
+                }
+
+                // Update previous entry's end time if it exists
+                if (previousEntry && previousEntry.stop) {
+                    const previousEndTime = new Date(previousEntry.stop);
+                    const newPreviousEndTime = new Date(previousEndTime.getTime() + 10 * 60 * 1000);
+
+                    const previousResponse = await fetch(`/api/time-entries/${previousEntry.id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                            'X-API-Key': apiKey
+                        },
+                        body: JSON.stringify({
+                            end_time: newPreviousEndTime.toISOString()
+                        })
+                    });
+
+                    if (previousResponse.status === 401) {
+                        throw new Error('Invalid API key');
+                    }
+
+                    if (!previousResponse.ok) {
+                        const errorData = await previousResponse.json();
+                        throw new Error(errorData.error || `Failed to update previous time entry: ${previousResponse.status}`);
+                    }
+                }
+
+                // Reload entries to show updated times
+                await loadTimeEntries();
+
+            } catch (error) {
+                console.error('Error removing 10 minutes:', error);
+                alert(`Error removing 10 minutes: ${error.message}`);
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function snapToHour() {
+            const button = document.getElementById('snapToHourButton');
+            button.disabled = true;
+
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                alert('No API key found. Please go to settings and enter your API key.');
+                button.disabled = false;
+                return;
+            }
+
+            try {
+                // Get the current (most recent) and previous time entries
+                if (allEntries.length === 0) {
+                    alert('No time entries found.');
+                    button.disabled = false;
+                    return;
+                }
+
+                const currentEntry = allEntries[0]; // Most recent entry
+                const previousEntry = allEntries.length > 1 ? allEntries[1] : null;
+
+                if (!currentEntry) {
+                    alert('No current time entry found.');
+                    button.disabled = false;
+                    return;
+                }
+
+                // Calculate the most recent hour on the hour
+                const currentStartTime = new Date(currentEntry.start);
+                const snappedHour = new Date(currentStartTime);
+                snappedHour.setMinutes(0);
+                snappedHour.setSeconds(0);
+                snappedHour.setMilliseconds(0);
+
+                // Update current entry's start time to the snapped hour
+                const currentResponse = await fetch(`/api/time-entries/${currentEntry.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        start_time: snappedHour.toISOString()
+                    })
+                });
+
+                if (currentResponse.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!currentResponse.ok) {
+                    const errorData = await currentResponse.json();
+                    throw new Error(errorData.error || `Failed to update current time entry: ${currentResponse.status}`);
+                }
+
+                // Update previous entry's end time to the same snapped hour if it exists
+                if (previousEntry && previousEntry.stop) {
+                    const previousResponse = await fetch(`/api/time-entries/${previousEntry.id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                            'X-API-Key': apiKey
+                        },
+                        body: JSON.stringify({
+                            end_time: snappedHour.toISOString()
+                        })
+                    });
+
+                    if (previousResponse.status === 401) {
+                        throw new Error('Invalid API key');
+                    }
+
+                    if (!previousResponse.ok) {
+                        const errorData = await previousResponse.json();
+                        throw new Error(errorData.error || `Failed to update previous time entry: ${previousResponse.status}`);
+                    }
+                }
+
+                // Reload entries to show updated times
+                await loadTimeEntries();
+
+            } catch (error) {
+                console.error('Error snapping to hour:', error);
+                alert(`Error snapping to hour: ${error.message}`);
+            } finally {
+                button.disabled = false;
             }
         }
 
