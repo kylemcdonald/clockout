@@ -56,6 +56,17 @@
             padding: 16px;
             margin-bottom: 12px;
             border-radius: 4px;
+            position: relative;
+        }
+        .time-entry::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: var(--visualization-width, 0%);
+            height: 3px;
+            background-color: var(--visualization-color, #D15540);
+            border-radius: 4px 4px 0 0;
         }
         .time-entry-header {
             display: flex;
@@ -322,6 +333,16 @@
             return `${minutes}m ${secs}s`;
         }
 
+        function formatDurationFromSeconds(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${secs}s`;
+            }
+            return `${minutes}m ${secs}s`;
+        }
+
         function formatDateTime(dateString) {
             const date = new Date(dateString);
             const year = date.getFullYear();
@@ -552,15 +573,33 @@
                 
                 // Add entries for this date
                 entriesByDate[dateKey].forEach(entry => {
+                    const isRunning = !entry.stop || entry.duration < 0;
                     const startTime = formatTime(entry.start);
-                    const endTime = entry.stop ? formatTime(entry.stop) : 'Running...';
-                    const duration = formatDuration(entry.duration);
+                    
+                    let endTime, duration, durationHours, widthPercentage;
+                    if (isRunning) {
+                        // Calculate current duration for running entry
+                        const now = new Date();
+                        const start = new Date(entry.start);
+                        const currentDurationSeconds = Math.floor((now - start) / 1000);
+                        durationHours = currentDurationSeconds / 3600;
+                        widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                        duration = formatDurationFromSeconds(currentDurationSeconds);
+                        endTime = formatTime(now.toISOString());
+                    } else {
+                        endTime = formatTime(entry.stop);
+                        duration = formatDuration(entry.duration);
+                        durationHours = entry.duration / 3600;
+                        widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                    }
+                    
                     const projectName = entry.name || 'Unknown Project';
                     const projectColor = projectColors[projectName] || '#D15540';
                     const projectNameStyle = `background-color: ${projectColor};`;
+                    const runningAttr = isRunning ? `data-running="true" data-start-time="${entry.start}"` : '';
 
                     entriesHtml += `
-                        <div class="time-entry" data-entry-id="${entry.id}">
+                        <div class="time-entry" data-entry-id="${entry.id}" ${runningAttr} style="--visualization-color: ${projectColor}; --visualization-width: ${widthPercentage}%;">
                             <div class="time-entry-header">
                                 <span class="project-name project-name-colored" style="${projectNameStyle}">${projectName}</span>
                                 <div>
@@ -600,6 +639,40 @@
             } else {
                 document.getElementById('pagination').style.display = 'none';
             }
+            
+            // Update running entries immediately and set up interval
+            updateRunningEntries();
+        }
+
+        function updateRunningEntries() {
+            const runningEntries = document.querySelectorAll('.time-entry[data-running="true"]');
+            runningEntries.forEach(entryElement => {
+                const startTimeStr = entryElement.getAttribute('data-start-time');
+                if (!startTimeStr) return;
+                
+                const start = new Date(startTimeStr);
+                const now = new Date();
+                const currentDurationSeconds = Math.floor((now - start) / 1000);
+                const durationHours = currentDurationSeconds / 3600;
+                const widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                
+                // Update duration display
+                const durationElement = entryElement.querySelector('.duration');
+                if (durationElement) {
+                    durationElement.textContent = formatDurationFromSeconds(currentDurationSeconds);
+                }
+                
+                // Update time range display
+                const timeRangeElement = entryElement.querySelector('.time-range');
+                if (timeRangeElement) {
+                    const startTime = formatTime(startTimeStr);
+                    const currentTime = formatTime(now.toISOString());
+                    timeRangeElement.textContent = `${startTime} → ${currentTime}`;
+                }
+                
+                // Update visualization width
+                entryElement.style.setProperty('--visualization-width', `${widthPercentage}%`);
+            });
         }
 
         function goToPage(page) {
@@ -616,6 +689,9 @@
         fetchProjects().then(() => {
             loadTimeEntries();
         });
+
+        // Set up interval to update running entries every second
+        let runningEntriesInterval = setInterval(updateRunningEntries, 1000);
 
         // Navigate to main page on Escape key
         // Use capture phase and window to ensure it works regardless of focus
