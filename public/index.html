@@ -496,6 +496,16 @@
         if (apiToken) {
             fetchProjects();
         }
+
+        // Handle Escape key to navigate to history page
+        // Use capture phase and window to ensure it works regardless of focus
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' || event.keyCode === 27) {
+                event.preventDefault();
+                event.stopPropagation();
+                window.location.href = '/history';
+            }
+        }, true);
     </script>
 </body>
 
