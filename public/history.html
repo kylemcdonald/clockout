@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Time Entry History - Clock-Out</title>
+    <title>History - Clock-Out</title>
     <link rel="stylesheet" href="style.css">
     <style>
         * {
@@ -103,7 +103,8 @@
             margin-bottom: 20px;
         }
         .edit-button,
-        .delete-button {
+        .delete-button,
+        .extend-button {
             padding: 6px 12px;
             background-color: rgba(255, 255, 255, 0.1);
             color: white;
@@ -114,7 +115,8 @@
             margin-left: 6px;
         }
         .edit-button:hover,
-        .delete-button:hover {
+        .delete-button:hover,
+        .extend-button:hover {
             background-color: rgba(255, 255, 255, 0.15);
         }
         .save-button {
@@ -175,12 +177,39 @@
             font-size: 1.2em;
             font-weight: normal;
             margin-top: 32px;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
             padding-bottom: 8px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.2);
         }
         .date-header:first-child {
             margin-top: 0;
+        }
+        .day-minimap {
+            height: 1.2em;
+            width: 100%;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+            margin-bottom: 16px;
+            position: relative;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        .day-minimap:hover {
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+        .day-entries {
+            display: none;
+        }
+        .day-entries.expanded {
+            display: block;
+        }
+        .minimap-segment {
+            height: 100%;
+            position: absolute;
+            top: 0;
+        }
+        .minimap-segment.untracked {
+            background-color: rgba(102, 102, 102, 0.3);
         }
         .pagination {
             display: flex;
@@ -284,7 +313,7 @@
     </div>
     <div class="history-container">
         <div class="history-header">
-            <h1>Time Entry History</h1>
+            <h1>History</h1>
         </div>
         <div class="time-adjust-buttons">
             <button class="add-time-button" id="addTimeButton" onclick="addTenMinutes()">Add 10 Minutes</button>
@@ -300,8 +329,9 @@
     <script>
         let projectColors = {}; // Map project name to color
         let allEntries = []; // Store all entries for pagination
-        let currentPage = 1;
-        const entriesPerPage = 20;
+        let currentPage = 1; // Current week page (1-indexed, 7 days per page)
+        let allUniqueDates = []; // Sorted unique dates for pagination
+        let expandedDays = new Set(); // Track which days have expanded entries
 
         function getCookie(name) {
             const cname = name + "=";
@@ -394,6 +424,15 @@
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const day = String(date.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
+        }
+
+        function formatDateWithDayOfWeek(dateString) {
+            // dateString is in format "YYYY-MM-DD"
+            const [year, month, day] = dateString.split('-').map(Number);
+            const date = new Date(year, month - 1, day); // month is 0-indexed
+            const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const dayOfWeek = daysOfWeek[date.getDay()];
+            return `${dateString} ${dayOfWeek}`;
         }
 
         function formatTime(dateString) {
@@ -491,6 +530,31 @@
             }
 
             try {
+                // Find the current entry to get original values
+                const currentEntry = allEntries.find(entry => entry.id === entryId);
+                if (!currentEntry) {
+                    throw new Error('Entry not found');
+                }
+
+                const originalStartTime = new Date(currentEntry.start).toISOString();
+                const originalEndTime = currentEntry.stop ? new Date(currentEntry.stop).toISOString() : null;
+                const newStartTimeISO = new Date(startTime).toISOString();
+                const newEndTimeISO = endTime ? new Date(endTime).toISOString() : null;
+
+                // Check if start time or end time changed
+                const startTimeChanged = originalStartTime !== newStartTimeISO;
+                const endTimeChanged = originalEndTime !== newEndTimeISO;
+
+                // Sort all entries chronologically (oldest first) to find previous/next entries
+                const entriesChronological = [...allEntries].sort((a, b) => {
+                    return new Date(a.start) - new Date(b.start);
+                });
+
+                const currentIndex = entriesChronological.findIndex(entry => entry.id === entryId);
+                const previousEntry = currentIndex > 0 ? entriesChronological[currentIndex - 1] : null;
+                const nextEntry = currentIndex < entriesChronological.length - 1 ? entriesChronological[currentIndex + 1] : null;
+
+                // Update the current entry
                 const response = await fetch(`/api/time-entries/${entryId}`, {
                     method: 'PUT',
                     headers: {
@@ -499,8 +563,8 @@
                         'X-API-Key': apiKey
                     },
                     body: JSON.stringify({
-                        start_time: new Date(startTime).toISOString(),
-                        end_time: endTime ? new Date(endTime).toISOString() : null
+                        start_time: newStartTimeISO,
+                        end_time: newEndTimeISO
                     })
                 });
 
@@ -513,6 +577,52 @@
                     throw new Error(errorData.error || `Failed to update time entry: ${response.status}`);
                 }
 
+                // If start time changed, update previous entry's end time
+                if (startTimeChanged && previousEntry && previousEntry.stop) {
+                    try {
+                        const prevResponse = await fetch(`/api/time-entries/${previousEntry.id}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${apiKey}`,
+                                'X-API-Key': apiKey
+                            },
+                            body: JSON.stringify({
+                                end_time: newStartTimeISO
+                            })
+                        });
+
+                        if (!prevResponse.ok) {
+                            console.error('Failed to update previous entry end time');
+                        }
+                    } catch (error) {
+                        console.error('Error updating previous entry end time:', error);
+                    }
+                }
+
+                // If end time changed, update next entry's start time
+                if (endTimeChanged && newEndTimeISO && nextEntry) {
+                    try {
+                        const nextResponse = await fetch(`/api/time-entries/${nextEntry.id}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${apiKey}`,
+                                'X-API-Key': apiKey
+                            },
+                            body: JSON.stringify({
+                                start_time: newEndTimeISO
+                            })
+                        });
+
+                        if (!nextResponse.ok) {
+                            console.error('Failed to update next entry start time');
+                        }
+                    } catch (error) {
+                        console.error('Error updating next entry start time:', error);
+                    }
+                }
+
                 // Reload the page to refresh all data
                 loadTimeEntries();
 
@@ -522,7 +632,7 @@
             }
         }
 
-        async function loadTimeEntries() {
+        async function loadTimeEntries(preservePage = false) {
             const apiKey = getCookie('apiToken');
             if (!apiKey) {
                 document.getElementById('loadingMessage').style.display = 'none';
@@ -531,6 +641,9 @@
                 document.getElementById('errorMessage').className = 'error';
                 return;
             }
+
+            // Save current page if we want to preserve it
+            const savedPage = preservePage ? currentPage : null;
 
             try {
                 const response = await fetch('/api/time-entries', {
@@ -559,7 +672,25 @@
 
                 // Store all entries for pagination
                 allEntries = entries;
-                currentPage = 1; // Reset to first page when reloading
+                
+                // Calculate unique dates (sorted descending, most recent first)
+                const datesSet = new Set();
+                allEntries.forEach(entry => {
+                    datesSet.add(formatDate(entry.start));
+                });
+                allUniqueDates = Array.from(datesSet).sort((a, b) => {
+                    return new Date(b) - new Date(a);
+                });
+                
+                // Restore page if preserving, otherwise reset to first page
+                if (preservePage && savedPage !== null) {
+                    const daysPerPage = 7;
+                    const totalPages = Math.ceil(allUniqueDates.length / daysPerPage);
+                    currentPage = Math.min(savedPage, totalPages); // Ensure page is valid
+                    if (currentPage < 1) currentPage = 1;
+                } else {
+                    currentPage = 1; // Reset to first page when reloading
+                }
 
                 renderEntries();
             } catch (error) {
@@ -571,22 +702,231 @@
             }
         }
 
+        function renderUntrackedTimeEntry(gapStartTime, gapEndTime, previousEntryId, nextEntryId) {
+            const startTime = formatTime(gapStartTime);
+            const endTime = formatTime(gapEndTime);
+            const durationSeconds = Math.floor((new Date(gapEndTime) - new Date(gapStartTime)) / 1000);
+            const duration = formatDurationFromSeconds(durationSeconds);
+            const durationHours = durationSeconds / 3600;
+            const widthPercentage = Math.min((durationHours / 2) * 100, 100);
+            const untrackedColor = '#666666';
+            const projectNameStyle = `background-color: ${untrackedColor};`;
+
+            return `
+                <div class="time-entry" style="--visualization-color: ${untrackedColor}; --visualization-width: ${widthPercentage}%; opacity: 0.7;" data-gap-start="${gapStartTime}" data-gap-end="${gapEndTime}" data-previous-entry-id="${previousEntryId}" data-next-entry-id="${nextEntryId}">
+                    <div class="time-entry-header">
+                        <span class="project-name project-name-colored" style="${projectNameStyle}">Untracked Time</span>
+                        <div>
+                            <span class="duration">${duration}</span>
+                            <button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">Extend Above</button>
+                            <button class="extend-button" onclick="extendBelow(${previousEntryId}, ${nextEntryId}, '${gapEndTime}')">Extend Below</button>
+                        </div>
+                    </div>
+                    <div class="time-range">
+                        ${startTime}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTransitionTime(prevEndTime, nextStartTime) {
+            const prevTime = formatTime(prevEndTime);
+            const nextTime = formatTime(nextStartTime);
+            return `
+                <div class="time-range" style="text-align: center; padding: 8px 0; color: rgba(255, 255, 255, 0.6); font-size: 0.9em;">
+                    ${nextTime}
+                </div>
+            `;
+        }
+
+        function renderDayMinimap(dateKey, items, allEntriesForMinimap) {
+            // Calculate start and end of day (midnight to midnight)
+            const dayStart = new Date(dateKey + 'T00:00:00');
+            // Use exactly midnight of next day as the cutoff point
+            const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+            const dayDuration = dayEnd.getTime() - dayStart.getTime();
+            
+            // Collect all entries that overlap with this day (including from previous days)
+            const overlappingEntries = [];
+            
+            // First, add entries from the items passed in (current day's items)
+            items.forEach(item => {
+                if (item.type === 'entry') {
+                    overlappingEntries.push(item.entry);
+                }
+            });
+            
+            // Then, check all entries to find ones from previous days that bleed into this day
+            if (allEntriesForMinimap) {
+                allEntriesForMinimap.forEach(entry => {
+                    const entryStart = new Date(entry.start);
+                    const entryEnd = entry.stop && entry.duration >= 0 
+                        ? new Date(entry.stop) 
+                        : new Date(); // Use current time for running entries
+                    
+                    // Check if entry overlaps with this day
+                    // Entry overlaps if it starts before dayEnd and ends after dayStart
+                    if (entryStart.getTime() < dayEnd.getTime() && entryEnd.getTime() > dayStart.getTime()) {
+                        // Only add if not already in the list (avoid duplicates)
+                        if (!overlappingEntries.find(e => e.id === entry.id)) {
+                            overlappingEntries.push(entry);
+                        }
+                    }
+                });
+            }
+            
+            // Sort entries chronologically (oldest first) for the minimap
+            overlappingEntries.sort((a, b) => {
+                return new Date(a.start).getTime() - new Date(b.start).getTime();
+            });
+            
+            let segments = [];
+            
+            overlappingEntries.forEach(entry => {
+                let startTime = new Date(entry.start);
+                let endTime = entry.stop && entry.duration >= 0 
+                    ? new Date(entry.stop) 
+                    : new Date(); // Use current time for running entries
+                
+                // Clamp times to day boundaries (entries bleeding from previous day start at 0%, 
+                // entries extending past midnight are cut off at 100%)
+                const visibleStart = Math.max(startTime.getTime(), dayStart.getTime());
+                const visibleEnd = Math.min(endTime.getTime(), dayEnd.getTime());
+                
+                // Only show if there's overlap with this day
+                if (visibleStart < visibleEnd) {
+                    const leftPercent = ((visibleStart - dayStart.getTime()) / dayDuration) * 100;
+                    const widthPercent = ((visibleEnd - visibleStart) / dayDuration) * 100;
+                    
+                    // Get project color
+                    const projectName = entry.name || 'Unknown Project';
+                    const projectColor = projectColors[projectName] || '#D15540';
+                    
+                    if (widthPercent > 0 && leftPercent < 100) {
+                        segments.push({
+                            left: Math.max(0, leftPercent),
+                            width: Math.min(100 - leftPercent, widthPercent),
+                            color: projectColor,
+                            type: 'entry'
+                        });
+                    }
+                }
+            });
+            
+            // Also handle gaps from the items array
+            items.forEach(item => {
+                if (item.type === 'gap') {
+                    const gapStart = new Date(item.gapStart);
+                    const gapEnd = new Date(item.gapEnd);
+                    
+                    // Clamp gap to day boundaries
+                    const visibleStart = Math.max(gapStart.getTime(), dayStart.getTime());
+                    const visibleEnd = Math.min(gapEnd.getTime(), dayEnd.getTime());
+                    
+                    // Only show if there's overlap with this day
+                    if (visibleStart < visibleEnd) {
+                        const leftPercent = ((visibleStart - dayStart.getTime()) / dayDuration) * 100;
+                        const widthPercent = ((visibleEnd - visibleStart) / dayDuration) * 100;
+                        
+                        if (widthPercent > 0 && leftPercent < 100) {
+                            segments.push({
+                                left: Math.max(0, leftPercent),
+                                width: Math.min(100 - leftPercent, widthPercent),
+                                color: 'rgba(102, 102, 102, 0.3)',
+                                type: 'gap'
+                            });
+                        }
+                    }
+                }
+            });
+            
+            // Generate HTML for segments
+            let segmentsHtml = '';
+            segments.forEach(segment => {
+                segmentsHtml += `<div class="minimap-segment ${segment.type === 'gap' ? 'untracked' : ''}" style="left: ${segment.left}%; width: ${segment.width}%; background-color: ${segment.color};"></div>`;
+            });
+            
+            return `<div class="day-minimap" data-date-key="${dateKey}" onclick="toggleDayEntries('${dateKey}')">${segmentsHtml}</div>`;
+        }
+
+        function renderTimeEntry(entry) {
+            const isRunning = !entry.stop || entry.duration < 0;
+            
+            let duration, durationHours, widthPercentage;
+            if (isRunning) {
+                // Calculate current duration for running entry
+                const now = new Date();
+                const start = new Date(entry.start);
+                const currentDurationSeconds = Math.floor((now - start) / 1000);
+                durationHours = currentDurationSeconds / 3600;
+                widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                duration = formatDurationFromSeconds(currentDurationSeconds);
+            } else {
+                endTime = formatTime(entry.stop);
+                duration = formatDuration(entry.duration);
+                durationHours = entry.duration / 3600;
+                widthPercentage = Math.min((durationHours / 2) * 100, 100);
+            }
+            
+            const projectName = entry.name || 'Unknown Project';
+            const projectColor = projectColors[projectName] || '#D15540';
+            const projectNameStyle = `background-color: ${projectColor};`;
+            const runningAttr = isRunning ? `data-running="true" data-start-time="${entry.start}"` : '';
+            const startTime = formatTime(entry.start);
+
+            return `
+                <div class="time-entry" data-entry-id="${entry.id}" ${runningAttr} style="--visualization-color: ${projectColor}; --visualization-width: ${widthPercentage}%;">
+                    <div class="time-entry-header">
+                        <span class="project-name project-name-colored" style="${projectNameStyle}">${projectName}</span>
+                        <div>
+                            <span class="duration">${duration}</span>
+                            <button class="edit-button" onclick="editTimeEntry(${entry.id})">Edit</button>
+                            <button class="delete-button" onclick="deleteTimeEntry(${entry.id})">Delete</button>
+                        </div>
+                    </div>
+                    <div class="edit-form">
+                        <input type="datetime-local" class="edit-input start-input" value="${formatDateTimeForInput(entry.start)}" placeholder="Start time">
+                        <input type="datetime-local" class="edit-input end-input" value="${entry.stop ? formatDateTimeForInput(entry.stop) : ''}" placeholder="End time (leave empty if running)">
+                        <button class="save-button" onclick="saveTimeEntry(${entry.id})">Save</button>
+                        <button class="cancel-button" onclick="cancelEdit(${entry.id})">Cancel</button>
+                    </div>
+                    <div class="time-range">
+                        ${startTime}
+                    </div>
+                </div>
+            `;
+        }
+
         function renderEntries() {
-            if (allEntries.length === 0) {
+            if (allEntries.length === 0 || allUniqueDates.length === 0) {
                 document.getElementById('timeEntriesList').innerHTML = '<div class="loading">No time entries found for the last week.</div>';
                 document.getElementById('pagination').style.display = 'none';
                 return;
             }
 
-            // Calculate pagination
-            const totalPages = Math.ceil(allEntries.length / entriesPerPage);
-            const startIndex = (currentPage - 1) * entriesPerPage;
-            const endIndex = startIndex + entriesPerPage;
-            const paginatedEntries = allEntries.slice(startIndex, endIndex);
+            // Calculate total pages based on 7 days per page
+            const daysPerPage = 7;
+            const totalPages = Math.ceil(allUniqueDates.length / daysPerPage);
+            
+            // Validate current page
+            if (currentPage < 1) currentPage = 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            
+            // Get the dates for the current page
+            const startIndex = (currentPage - 1) * daysPerPage;
+            const endIndex = Math.min(startIndex + daysPerPage, allUniqueDates.length);
+            const currentPageDates = allUniqueDates.slice(startIndex, endIndex);
 
-            // Group entries by date
+            // Automatically expand today's date if it's on the current page
+            const today = new Date();
+            const todayDateKey = formatDate(today.toISOString());
+            if (currentPageDates.includes(todayDateKey)) {
+                expandedDays.add(todayDateKey);
+            }
+
+            // Group ALL entries by date (we need all entries to handle bleeding from other days)
             const entriesByDate = {};
-            paginatedEntries.forEach(entry => {
+            allEntries.forEach(entry => {
                 const dateKey = formatDate(entry.start);
                 if (!entriesByDate[dateKey]) {
                     entriesByDate[dateKey] = [];
@@ -594,78 +934,157 @@
                 entriesByDate[dateKey].push(entry);
             });
 
-            // Sort dates in descending order (most recent first)
-            const sortedDates = Object.keys(entriesByDate).sort((a, b) => {
-                return new Date(b) - new Date(a);
+            // Sort entries within each date by start time (descending, most recent first)
+            Object.keys(entriesByDate).forEach(dateKey => {
+                entriesByDate[dateKey].sort((a, b) => {
+                    return new Date(b.start) - new Date(a.start);
+                });
             });
-
-            // Build HTML with date headers
+            
+            // Build HTML for all days on the current page
             let entriesHtml = '';
-            sortedDates.forEach(dateKey => {
-                // Add date header
-                entriesHtml += `<div class="date-header">${dateKey}</div>`;
+            
+            // Loop through each date on the current page (most recent first)
+            currentPageDates.forEach(dateKey => {
+                const currentDayEntries = entriesByDate[dateKey] || [];
+
+                // Build HTML with date headers
+                // First, process ALL entries chronologically (oldest first) to detect gaps globally
+                // Then group items by date for display
+                let allItems = []; // Array of {type: 'entry'|'gap', entry?, gapStart?, gapEnd?, dateKey}
+                let previousEntryEndTime = null;
                 
-                // Add entries for this date
-                entriesByDate[dateKey].forEach(entry => {
-                    const isRunning = !entry.stop || entry.duration < 0;
-                    const startTime = formatTime(entry.start);
+                // Get all entries in chronological order (oldest first) for gap detection
+                // Only process entries for the current day
+                const allEntriesChronological = [...currentDayEntries].sort((a, b) => {
+                    return new Date(a.start) - new Date(b.start);
+                });
+                
+                // Process entries chronologically to detect gaps
+                let previousEntry = null;
+                allEntriesChronological.forEach(entry => {
+                    const entryDateKey = formatDate(entry.start);
                     
-                    let endTime, duration, durationHours, widthPercentage;
-                    if (isRunning) {
-                        // Calculate current duration for running entry
-                        const now = new Date();
-                        const start = new Date(entry.start);
-                        const currentDurationSeconds = Math.floor((now - start) / 1000);
-                        durationHours = currentDurationSeconds / 3600;
-                        widthPercentage = Math.min((durationHours / 2) * 100, 100);
-                        duration = formatDurationFromSeconds(currentDurationSeconds);
-                        endTime = formatTime(now.toISOString());
-                    } else {
-                        endTime = formatTime(entry.stop);
-                        duration = formatDuration(entry.duration);
-                        durationHours = entry.duration / 3600;
-                        widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                    // Check if there's a gap between this entry and the previous one
+                    if (previousEntryEndTime !== null && previousEntry !== null) {
+                        // Only check if we have a previous entry end time
+                        const entryStartTime = new Date(entry.start);
+                        const prevEndTime = new Date(previousEntryEndTime);
+                        
+                        // Check if times don't match (allowing for small rounding differences)
+                        if (Math.abs(entryStartTime.getTime() - prevEndTime.getTime()) > 1000) {
+                            // There's a gap - add untracked time entry
+                            const gapDateKey = formatDate(previousEntryEndTime);
+                            allItems.push({ 
+                                type: 'gap', 
+                                gapStart: previousEntryEndTime, 
+                                gapEnd: entry.start, 
+                                dateKey: gapDateKey,
+                                previousEntryId: previousEntry.id,
+                                nextEntryId: entry.id
+                            });
+                        }
                     }
                     
-                    const projectName = entry.name || 'Unknown Project';
-                    const projectColor = projectColors[projectName] || '#D15540';
-                    const projectNameStyle = `background-color: ${projectColor};`;
-                    const runningAttr = isRunning ? `data-running="true" data-start-time="${entry.start}"` : '';
-
-                    entriesHtml += `
-                        <div class="time-entry" data-entry-id="${entry.id}" ${runningAttr} style="--visualization-color: ${projectColor}; --visualization-width: ${widthPercentage}%;">
-                            <div class="time-entry-header">
-                                <span class="project-name project-name-colored" style="${projectNameStyle}">${projectName}</span>
-                                <div>
-                                    <span class="duration">${duration}</span>
-                                    <button class="edit-button" onclick="editTimeEntry(${entry.id})">Edit</button>
-                                    <button class="delete-button" onclick="deleteTimeEntry(${entry.id})">Delete</button>
-                                </div>
-                            </div>
-                            <div class="time-range">
-                                ${startTime} → ${endTime}
-                            </div>
-                            <div class="edit-form">
-                                <input type="datetime-local" class="edit-input start-input" value="${formatDateTimeForInput(entry.start)}" placeholder="Start time">
-                                <input type="datetime-local" class="edit-input end-input" value="${entry.stop ? formatDateTimeForInput(entry.stop) : ''}" placeholder="End time (leave empty if running)">
-                                <button class="save-button" onclick="saveTimeEntry(${entry.id})">Save</button>
-                                <button class="cancel-button" onclick="cancelEdit(${entry.id})">Cancel</button>
-                            </div>
-                        </div>
-                    `;
+                    // Add the actual entry
+                    allItems.push({ type: 'entry', entry, dateKey: entryDateKey });
+                    
+                    // Update previous entry end time and entry for next iteration
+                    // Only update if this entry has an end time (not running)
+                    if (entry.stop && entry.duration >= 0) {
+                        previousEntryEndTime = entry.stop;
+                        previousEntry = entry;
+                    } else {
+                        // Running entry - can't determine end time, so set to null
+                        // This means we won't check gaps for the next entry after a running entry
+                        previousEntryEndTime = null;
+                        previousEntry = null;
+                    }
                 });
+                
+                // Now group items by date for display
+                const itemsByDate = {};
+                allItems.forEach(item => {
+                    const itemDateKey = item.dateKey;
+                    if (!itemsByDate[itemDateKey]) {
+                        itemsByDate[itemDateKey] = [];
+                    }
+                    itemsByDate[itemDateKey].push(item);
+                });
+                
+                // Build HTML for this day
+                if (itemsByDate[dateKey] && itemsByDate[dateKey].length > 0) {
+                    // Add date header with day of the week
+                    entriesHtml += `<div class="date-header">${formatDateWithDayOfWeek(dateKey)}</div>`;
+                    
+                    // Add minimap visualization (pass all entries to find overlapping entries from other days)
+                    entriesHtml += renderDayMinimap(dateKey, itemsByDate[dateKey], allEntries);
+                    
+                    // Start day entries container
+                    const isExpanded = expandedDays.has(dateKey);
+                    entriesHtml += `<div class="day-entries ${isExpanded ? 'expanded' : ''}" data-date-key="${dateKey}">`;
+                    
+                    // Process items in forward chronological order to build transitions
+                    // Then reverse for display (most recent first)
+                    const forwardItems = itemsByDate[dateKey];
+                    const itemsWithTransitions = [];
+                    let nextEntryStartTime = null;
+                    
+                    // Process items in forward order (oldest first) to determine transitions
+                    forwardItems.forEach((item, index) => {
+                        if (item.type === 'gap') {
+                            itemsWithTransitions.push({ ...item, transitionBefore: null });
+                            nextEntryStartTime = item.gapEnd;
+                        } else if (item.type === 'entry') {
+                            // Add transition time if we have a next entry start time
+                            const transitionBefore = nextEntryStartTime !== null 
+                                ? { prevEnd: nextEntryStartTime, nextStart: item.entry.start }
+                                : null;
+                            itemsWithTransitions.push({ ...item, transitionBefore });
+                            
+                            // Update nextEntryStartTime to this entry's end time (if it has one)
+                            if (item.entry.stop && item.entry.duration >= 0) {
+                                nextEntryStartTime = item.entry.stop;
+                            } else {
+                                // Running entry - can't determine end time
+                                nextEntryStartTime = null;
+                            }
+                        }
+                    });
+                    
+                    // Reverse for display (most recent first)
+                    itemsWithTransitions.reverse().forEach((item) => {
+                        if (item.type === 'gap') {
+                            entriesHtml += renderUntrackedTimeEntry(item.gapStart, item.gapEnd, item.previousEntryId, item.nextEntryId);
+                        } else if (item.type === 'entry') {
+                            entriesHtml += renderTimeEntry(item.entry);
+                        }
+                    });
+                    
+                    // Close day entries container
+                    entriesHtml += `</div>`;
+                } else {
+                    // No entries for this day (shouldn't happen, but handle gracefully)
+                    entriesHtml += `<div class="date-header">${formatDateWithDayOfWeek(dateKey)}</div>`;
+                    entriesHtml += `<div class="loading">No time entries found for this day.</div>`;
+                }
             });
 
             document.getElementById('timeEntriesList').innerHTML = entriesHtml;
 
-            // Render pagination controls if there are more than 20 entries
-            if (allEntries.length > entriesPerPage) {
-                const totalPages = Math.ceil(allEntries.length / entriesPerPage);
+            // Render pagination controls if there are more than 1 page
+            if (totalPages > 1) {
+                const firstDate = currentPageDates[currentPageDates.length - 1]; // Oldest date on page
+                const lastDate = currentPageDates[0]; // Most recent date on page
+                const dateRange = currentPageDates.length === 1 
+                    ? firstDate 
+                    : `${firstDate} - ${lastDate}`;
+                
                 const paginationHtml = `
                     <div class="pagination">
-                        <button class="pagination-button" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Previous</button>
-                        <span class="pagination-info">Page ${currentPage} of ${totalPages}</span>
-                        <button class="pagination-button" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next</button>
+                        <button class="pagination-button" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Previous Week</button>
+                        <span class="pagination-info">${dateRange} (Week ${currentPage} of ${totalPages})</span>
+                        <button class="pagination-button" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next Week</button>
                     </div>
                 `;
                 document.getElementById('pagination').innerHTML = paginationHtml;
@@ -696,26 +1115,108 @@
                     durationElement.textContent = formatDurationFromSeconds(currentDurationSeconds);
                 }
                 
-                // Update time range display
-                const timeRangeElement = entryElement.querySelector('.time-range');
-                if (timeRangeElement) {
-                    const startTime = formatTime(startTimeStr);
-                    const currentTime = formatTime(now.toISOString());
-                    timeRangeElement.textContent = `${startTime} → ${currentTime}`;
-                }
-                
                 // Update visualization width
                 entryElement.style.setProperty('--visualization-width', `${widthPercentage}%`);
             });
         }
 
         function goToPage(page) {
-            const totalPages = Math.ceil(allEntries.length / entriesPerPage);
+            const daysPerPage = 7;
+            const totalPages = Math.ceil(allUniqueDates.length / daysPerPage);
             if (page >= 1 && page <= totalPages) {
                 currentPage = page;
                 renderEntries();
                 // Scroll to top of entries list
                 document.getElementById('timeEntriesList').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function toggleDayEntries(dateKey) {
+            const entriesContainer = document.querySelector(`.day-entries[data-date-key="${dateKey}"]`);
+            if (entriesContainer) {
+                if (expandedDays.has(dateKey)) {
+                    expandedDays.delete(dateKey);
+                    entriesContainer.classList.remove('expanded');
+                } else {
+                    expandedDays.add(dateKey);
+                    entriesContainer.classList.add('expanded');
+                }
+            }
+        }
+
+        async function extendAbove(previousEntryId, nextEntryId, gapStartTime) {
+            // Extend the entry below (next entry) to start at gapStartTime (previous entry's end time)
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                alert('No API key found. Please go to settings and enter your API key.');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/time-entries/${nextEntryId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        start_time: gapStartTime
+                    })
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Failed to update time entry: ${response.status}`);
+                }
+
+                // Reload entries to show updated times, preserving current page
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error extending above:', error);
+                alert(`Error extending above: ${error.message}`);
+            }
+        }
+
+        async function extendBelow(previousEntryId, nextEntryId, gapEndTime) {
+            // Extend the entry above (previous entry) to end at gapEndTime (next entry's start time)
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                alert('No API key found. Please go to settings and enter your API key.');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/time-entries/${previousEntryId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        end_time: gapEndTime
+                    })
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Failed to update time entry: ${response.status}`);
+                }
+
+                // Reload entries to show updated times, preserving current page
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error extending below:', error);
+                alert(`Error extending below: ${error.message}`);
             }
         }
 
