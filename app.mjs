@@ -242,24 +242,42 @@ app.get('/api/time-entries/current', requireApiKey, (req, res) => {
     }
 });
 
-// Get time entries for the last week
+// Get time entries - optionally filtered to last 168 hours
 app.get('/api/time-entries', requireApiKey, (req, res) => {
     try {
-        const stmt = db.prepare(`
-            SELECT te.id, te.project_id, te.start_time, te.end_time, p.name as project_name
-            FROM time_entries te
-            JOIN projects p ON te.project_id = p.id
-            WHERE te.api_key_id = ?
-            ORDER BY te.start_time DESC
-        `);
-        const entries = stmt.all(req.apiKeyId);
-        
+        const showAll = req.query.all === 'true';
+        let entries;
+
+        if (showAll) {
+            // Return all entries for history page
+            const stmt = db.prepare(`
+                SELECT te.id, te.project_id, te.start_time, te.end_time, p.name as project_name
+                FROM time_entries te
+                JOIN projects p ON te.project_id = p.id
+                WHERE te.api_key_id = ?
+                ORDER BY te.start_time DESC
+            `);
+            entries = stmt.all(req.apiKeyId);
+        } else {
+            // Return entries for last 168 hours (filter by end_time or running tasks)
+            const windowStart = new Date(Date.now() - 168 * 60 * 60 * 1000);
+            const stmt = db.prepare(`
+                SELECT te.id, te.project_id, te.start_time, te.end_time, p.name as project_name
+                FROM time_entries te
+                JOIN projects p ON te.project_id = p.id
+                WHERE te.api_key_id = ?
+                  AND (te.end_time >= ? OR te.end_time IS NULL)
+                ORDER BY te.start_time DESC
+            `);
+            entries = stmt.all(req.apiKeyId, windowStart.toISOString());
+        }
+
         res.json(entries.map(entry => ({
             id: entry.id,
             project_id: entry.project_id,
             start: entry.start_time,
             stop: entry.end_time,
-            duration: entry.end_time 
+            duration: entry.end_time
                 ? Math.floor((new Date(entry.end_time) - new Date(entry.start_time)) / 1000)
                 : -1,
             name: entry.project_name

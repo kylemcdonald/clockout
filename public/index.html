@@ -61,8 +61,19 @@
             let totalHours = cachedTotalHours;
 
             if (currentTaskName && currentTaskStartTime) {
-                const currentElapsedHours = (Date.now() - currentTaskStartTime.getTime()) / 3600000;
-                const delta = Math.max(0, currentElapsedHours - currentTaskElapsedAtLastUpdateHours);
+                const now = Date.now();
+                const windowStart = now - 168 * 60 * 60 * 1000;
+                // Clamp start time to window start
+                const effectiveStart = Math.max(currentTaskStartTime.getTime(), windowStart);
+                const currentElapsedHours = (now - effectiveStart) / 3600000;
+
+                // Calculate elapsed at last update, also clamped to window
+                const effectiveStartAtUpdate = Math.max(currentTaskStartTime.getTime(), windowStart);
+                const elapsedAtUpdateClamped = totalsLastUpdatedAt
+                    ? Math.max(0, (totalsLastUpdatedAt - effectiveStartAtUpdate) / 3600000)
+                    : 0;
+
+                const delta = Math.max(0, currentElapsedHours - elapsedAtUpdateClamped);
                 totals[currentTaskName] = (totals[currentTaskName] || 0) + delta;
                 totalHours += delta;
             }
@@ -327,17 +338,23 @@
                 }
 
                 const timeEntries = await response.json();
-                
+
                 let totalHours = 0;
                 let projectTimes = {};
+                const now = new Date();
+                const windowStart = new Date(now.getTime() - 168 * 60 * 60 * 1000);
 
                 timeEntries.forEach(entry => {
-                    let duration = entry.duration;
-                    if (duration < 0) {
-                        const start = new Date(entry.start);
-                        duration = (new Date().getTime() - start.getTime()) / 1000;
-                    }
-                    let durationHours = duration / 3600;
+                    const start = new Date(entry.start);
+                    const end = entry.duration < 0 ? now : new Date(entry.stop);
+
+                    // Calculate effective start (clamp to window start)
+                    const effectiveStart = start < windowStart ? windowStart : start;
+
+                    // Only count time within the 168-hour window
+                    const durationMs = Math.max(0, end.getTime() - effectiveStart.getTime());
+                    const durationHours = durationMs / 3600000;
+
                     totalHours += durationHours;
                     const projectName = entry.name;
                     if (projectName) {

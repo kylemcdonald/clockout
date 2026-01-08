@@ -641,7 +641,7 @@
             const savedPage = preservePage ? currentPage : null;
 
             try {
-                const response = await fetch('/api/time-entries', {
+                const response = await fetch('/api/time-entries?all=true', {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
                         'X-API-Key': apiKey
