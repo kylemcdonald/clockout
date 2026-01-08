@@ -245,17 +245,14 @@ app.get('/api/time-entries/current', requireApiKey, (req, res) => {
 // Get time entries for the last week
 app.get('/api/time-entries', requireApiKey, (req, res) => {
     try {
-        const now = new Date();
-        const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-        
         const stmt = db.prepare(`
             SELECT te.id, te.project_id, te.start_time, te.end_time, p.name as project_name
             FROM time_entries te
             JOIN projects p ON te.project_id = p.id
-            WHERE te.api_key_id = ? AND te.start_time >= ?
+            WHERE te.api_key_id = ?
             ORDER BY te.start_time DESC
         `);
-        const entries = stmt.all(req.apiKeyId, oneWeekAgo.toISOString());
+        const entries = stmt.all(req.apiKeyId);
         
         res.json(entries.map(entry => ({
             id: entry.id,
