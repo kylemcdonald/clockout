@@ -40,6 +40,7 @@
         let currentTaskStartTime = null;
         let currentTaskName = null;
         let cachedProjectTotals = {};
+        let cachedProjectDays = {}; // Maps project name to array of 7 booleans (index 0 = 7 days ago, index 6 = today)
         let cachedTotalHours = 0;
         let totalsLastUpdatedAt = null;
         let currentTaskElapsedAtLastUpdateHours = 0;
@@ -153,7 +154,26 @@
             }
             const { totals, totalHours } = getAdjustedTotals();
             renderProjectTotals(totals);
+            renderDayIndicators();
             renderUntracked(totalHours);
+        }
+
+        function renderDayIndicators() {
+            projects.forEach(project => {
+                const indicator = document.getElementById(`days-${project.name}`);
+                if (!indicator) return;
+
+                let days = cachedProjectDays[project.name] || [false, false, false, false, false, false, false];
+
+                // If this project is currently running, mark today as active
+                if (currentTaskName === project.name) {
+                    days = [...days];
+                    days[6] = true;
+                }
+
+                const symbols = days.map(active => active ? '◉' : '◯').join('');
+                indicator.textContent = symbols;
+            });
         }
 
 
@@ -248,9 +268,15 @@
                 const offset = document.createElement('span');
                 offset.className = 'offset';
 
+                const dayIndicator = document.createElement('span');
+                dayIndicator.className = 'day-indicator';
+                dayIndicator.id = `days-${project.name}`;
+                dayIndicator.textContent = '◯◯◯◯◯◯◯';
+
                 container.appendChild(fill);
                 container.appendChild(label);
                 container.appendChild(offset);
+                container.appendChild(dayIndicator);
 
                 taskGrid.appendChild(container);
             });
@@ -341,8 +367,19 @@
 
                 let totalHours = 0;
                 let projectTimes = {};
+                let projectDays = {}; // Maps project name to Set of day indices (0-6)
                 const now = new Date();
                 const windowStart = new Date(now.getTime() - 168 * 60 * 60 * 1000);
+
+                // Calculate midnight boundaries for the last 7 days
+                const todayMidnight = new Date(now);
+                todayMidnight.setHours(0, 0, 0, 0);
+                const dayBoundaries = [];
+                for (let i = 6; i >= 0; i--) {
+                    const dayStart = new Date(todayMidnight.getTime() - i * 24 * 60 * 60 * 1000);
+                    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+                    dayBoundaries.push({ start: dayStart, end: dayEnd, index: 6 - i });
+                }
 
                 timeEntries.forEach(entry => {
                     const start = new Date(entry.start);
@@ -363,10 +400,26 @@
                         } else {
                             projectTimes[projectName] = durationHours;
                         }
+
+                        // Check which days this entry spans
+                        if (!projectDays[projectName]) {
+                            projectDays[projectName] = new Set();
+                        }
+                        dayBoundaries.forEach(day => {
+                            // Entry overlaps with day if entry.start < day.end AND entry.end > day.start
+                            if (start < day.end && end > day.start) {
+                                projectDays[projectName].add(day.index);
+                            }
+                        });
                     }
                 });
 
                 cachedProjectTotals = projectTimes;
+                // Convert Sets to arrays of booleans
+                cachedProjectDays = {};
+                for (const projectName in projectDays) {
+                    cachedProjectDays[projectName] = Array.from({ length: 7 }, (_, i) => projectDays[projectName].has(i));
+                }
                 cachedTotalHours = totalHours;
                 totalsLastUpdatedAt = Date.now();
                 if (currentTaskStartTime) {

@@ -131,6 +131,14 @@ html {
     top: 1em;
     right: 1em;
 }
+.day-indicator {
+    position: absolute;
+    bottom: 0.5em;
+    font-size: 50%;
+    opacity: 0.6;
+    letter-spacing: 0.1em;
+    z-index: 1;
+}
 .modal {
     display: none;
     position: fixed;
