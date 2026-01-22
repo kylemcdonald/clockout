@@ -13,6 +13,24 @@
 </head>
 
 <body>
+    <div class="task-timer-bar" id="taskTimerBar" style="display: none;">
+        <span class="task-timer-duration" id="taskTimerDuration" onclick="openDurationEditor()">0:00</span>
+        <div class="time-adjust-buttons">
+            <button class="time-adjust-btn" id="addTenBtn" onclick="addTenMinutes()">10m</button>
+            <button class="time-adjust-btn" id="addThirtyBtn" onclick="addThirtyMinutes()">30m</button>
+            <button class="time-adjust-btn" id="addHourBtn" onclick="addOneHour()">1h</button>
+        </div>
+    </div>
+    <div id="durationEditorModal" class="duration-editor-modal" style="display: none;">
+        <div class="duration-editor-content">
+            <label for="durationInput">Set duration (minutes):</label>
+            <input type="number" id="durationInput" min="1" step="1" value="60">
+            <div class="duration-editor-buttons">
+                <button onclick="saveDuration()">Save</button>
+                <button onclick="closeDurationEditor()">Cancel</button>
+            </div>
+        </div>
+    </div>
     <div class="page-nav">
         <a href="/" title="Track">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
@@ -139,13 +157,27 @@
         }
 
         function updateDocumentTitle() {
+            const timerBar = document.getElementById('taskTimerBar');
+            const timerDuration = document.getElementById('taskTimerDuration');
+
             if (currentTaskName && currentTaskStartTime instanceof Date) {
                 const elapsedSeconds = (Date.now() - currentTaskStartTime.getTime()) / 1000;
                 const formattedDuration = formatElapsedDuration(elapsedSeconds);
                 document.title = `${formattedDuration} ${currentTaskName}`;
+
+                // Update timer bar
+                if (timerBar && timerDuration) {
+                    timerBar.style.display = 'flex';
+                    timerDuration.textContent = formattedDuration;
+                }
                 return;
             }
             document.title = DEFAULT_TITLE;
+
+            // Hide timer bar when no task is running
+            if (timerBar) {
+                timerBar.style.display = 'none';
+            }
         }
 
         function renderTotalsFromCache() {
@@ -567,9 +599,155 @@
             fetchProjects();
         }
 
+        // Duration editor functions
+        function openDurationEditor() {
+            if (!currentTaskId || !currentTaskStartTime) {
+                return;
+            }
+            const modal = document.getElementById('durationEditorModal');
+            const input = document.getElementById('durationInput');
+
+            // Calculate current duration in minutes
+            const elapsedMinutes = Math.round((Date.now() - currentTaskStartTime.getTime()) / 60000);
+            input.value = Math.max(1, elapsedMinutes);
+
+            modal.style.display = 'flex';
+            input.focus();
+            input.select();
+        }
+
+        function closeDurationEditor() {
+            const modal = document.getElementById('durationEditorModal');
+            modal.style.display = 'none';
+        }
+
+        async function saveDuration() {
+            if (!currentTaskId || !apiToken) {
+                closeDurationEditor();
+                return;
+            }
+
+            const input = document.getElementById('durationInput');
+            const newDurationMinutes = parseInt(input.value, 10);
+
+            if (isNaN(newDurationMinutes) || newDurationMinutes < 1) {
+                alert('Please enter a valid duration (minimum 1 minute).');
+                return;
+            }
+
+            try {
+                // Calculate new start time based on desired duration
+                const newStartTime = new Date(Date.now() - newDurationMinutes * 60 * 1000);
+
+                const response = await fetch(`/api/time-entries/${currentTaskId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({
+                        start_time: newStartTime.toISOString()
+                    })
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to update duration');
+                }
+
+                // Update local state
+                currentTaskStartTime = newStartTime;
+                updateDocumentTitle();
+                updateTotals();
+                closeDurationEditor();
+
+            } catch (error) {
+                console.error('Error saving duration:', error);
+                alert(`Error saving duration: ${error.message}`);
+            }
+        }
+
+        // Close modal on Escape or clicking outside
+        document.getElementById('durationEditorModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeDurationEditor();
+            }
+        });
+
+        document.getElementById('durationInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                saveDuration();
+            } else if (e.key === 'Escape') {
+                closeDurationEditor();
+            }
+        });
+
+        // Add time functions
+        async function addTenMinutes() {
+            await addMinutesToCurrentTask(10);
+        }
+
+        async function addThirtyMinutes() {
+            await addMinutesToCurrentTask(30);
+        }
+
+        async function addOneHour() {
+            await addMinutesToCurrentTask(60);
+        }
+
+        async function addMinutesToCurrentTask(minutes) {
+            if (!currentTaskId || !currentTaskStartTime || !apiToken) {
+                return;
+            }
+
+            // Disable buttons during operation
+            const buttons = document.querySelectorAll('.time-adjust-btn');
+            buttons.forEach(btn => btn.disabled = true);
+
+            try {
+                // Calculate new start time (earlier by the specified minutes)
+                const newStartTime = new Date(currentTaskStartTime.getTime() - minutes * 60 * 1000);
+
+                const response = await fetch(`/api/time-entries/${currentTaskId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({
+                        start_time: newStartTime.toISOString()
+                    })
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to add time');
+                }
+
+                // Update local state
+                currentTaskStartTime = newStartTime;
+                updateDocumentTitle();
+                updateTotals();
+
+            } catch (error) {
+                console.error(`Error adding ${minutes} minutes:`, error);
+                alert(`Error adding time: ${error.message}`);
+            } finally {
+                buttons.forEach(btn => btn.disabled = false);
+            }
+        }
+
         // Handle Escape key to navigate to history page
         // Use capture phase and window to ensure it works regardless of focus
         window.addEventListener('keydown', (event) => {
+            // Don't navigate if duration editor is open
+            const modal = document.getElementById('durationEditorModal');
+            if (modal && modal.style.display === 'flex') {
+                return;
+            }
+
             if (event.key === 'Escape' || event.keyCode === 27) {
                 event.preventDefault();
                 event.stopPropagation();
