@@ -13,6 +13,11 @@
 </head>
 
 <body>
+    <div class="time-adjust-nav">
+        <button id="addTenButton" onclick="addTenMinutes()">10m</button>
+        <button id="addThirtyButton" onclick="addThirtyMinutes()">30m</button>
+        <button id="addHourButton" onclick="addOneHour()">1h</button>
+    </div>
     <div class="page-nav">
         <a href="/" title="Track">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
@@ -576,6 +581,98 @@
                 window.location.href = '/history';
             }
         }, true);
+
+        async function fetchRecentEntries() {
+            if (!apiToken) return [];
+            try {
+                const response = await fetch('/api/time-entries?all=true', {
+                    headers: getApiHeaders()
+                });
+                if (!response.ok) return [];
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching entries:', error);
+                return [];
+            }
+        }
+
+        async function addTimeToCurrentTask(minutes) {
+            if (!apiToken) {
+                alert('Please enter an API key in settings first.');
+                return;
+            }
+
+            const allEntries = await fetchRecentEntries();
+            if (allEntries.length === 0) {
+                alert('No time entries found.');
+                return;
+            }
+
+            const currentEntry = allEntries[0];
+            const previousEntry = allEntries.length > 1 ? allEntries[1] : null;
+
+            if (!currentEntry) {
+                alert('No current time entry found.');
+                return;
+            }
+
+            try {
+                const currentStartTime = new Date(currentEntry.start);
+                const newCurrentStartTime = new Date(currentStartTime.getTime() - minutes * 60 * 1000);
+
+                const currentResponse = await fetch(`/api/time-entries/${currentEntry.id}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({
+                        start_time: newCurrentStartTime.toISOString()
+                    })
+                });
+
+                if (!currentResponse.ok) {
+                    const errorData = await currentResponse.json();
+                    throw new Error(errorData.error || 'Failed to update current entry');
+                }
+
+                if (previousEntry && previousEntry.stop) {
+                    const previousEndTime = new Date(previousEntry.stop);
+                    const newPreviousEndTime = new Date(previousEndTime.getTime() - minutes * 60 * 1000);
+
+                    await fetch(`/api/time-entries/${previousEntry.id}`, {
+                        method: 'PUT',
+                        headers: getApiHeaders(),
+                        body: JSON.stringify({
+                            end_time: newPreviousEndTime.toISOString()
+                        })
+                    });
+                }
+
+                await updateTotals();
+            } catch (error) {
+                console.error('Error adding time:', error);
+                alert(`Error adding time: ${error.message}`);
+            }
+        }
+
+        async function addTenMinutes() {
+            const button = document.getElementById('addTenButton');
+            button.disabled = true;
+            await addTimeToCurrentTask(10);
+            button.disabled = false;
+        }
+
+        async function addThirtyMinutes() {
+            const button = document.getElementById('addThirtyButton');
+            button.disabled = true;
+            await addTimeToCurrentTask(30);
+            button.disabled = false;
+        }
+
+        async function addOneHour() {
+            const button = document.getElementById('addHourButton');
+            button.disabled = true;
+            await addTimeToCurrentTask(60);
+            button.disabled = false;
+        }
     </script>
 </body>
 

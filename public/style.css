@@ -257,3 +257,31 @@ html {
 .page-nav a:hover {
     background-color: rgba(255, 255, 255, 0.2);
 }
+
+.time-adjust-nav {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 1001;
+    display: flex;
+    gap: 10px;
+}
+
+.time-adjust-nav button {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 15px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+
+.time-adjust-nav button:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.time-adjust-nav button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
