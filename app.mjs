@@ -217,15 +217,29 @@ app.delete('/api/projects/:id', requireApiKey, (req, res) => {
 // Get current running time entry
 app.get('/api/time-entries/current', requireApiKey, (req, res) => {
     try {
-        const stmt = db.prepare(`
+        // Get all running entries to check for duplicates
+        const allRunningStmt = db.prepare(`
             SELECT te.id, te.project_id, te.start_time, p.name as project_name
             FROM time_entries te
             JOIN projects p ON te.project_id = p.id
             WHERE te.api_key_id = ? AND te.end_time IS NULL
             ORDER BY te.start_time DESC
-            LIMIT 1
         `);
-        const entry = stmt.get(req.apiKeyId);
+        const runningEntries = allRunningStmt.all(req.apiKeyId);
+
+        // If multiple running entries exist, stop all but the most recent one
+        if (runningEntries.length > 1) {
+            const mostRecentId = runningEntries[0].id;
+            const staleIds = runningEntries.slice(1).map(e => e.id);
+            const stopStaleStmt = db.prepare(`
+                UPDATE time_entries SET end_time = start_time
+                WHERE id IN (${staleIds.map(() => '?').join(',')}) AND end_time IS NULL
+            `);
+            stopStaleStmt.run(...staleIds);
+            console.log(`Cleaned up ${staleIds.length} stale running entries, keeping entry ${mostRecentId}`);
+        }
+
+        const entry = runningEntries[0];
         if (entry) {
             res.json({
                 id: entry.id,
@@ -295,25 +309,32 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
         if (!project_id) {
             return res.status(400).json({ error: 'project_id is required' });
         }
-        
+
         // Verify project belongs to this API key
         const projectStmt = db.prepare('SELECT id, name FROM projects WHERE id = ? AND api_key_id = ?');
         const project = projectStmt.get(parseInt(project_id), req.apiKeyId);
         if (!project) {
             return res.status(404).json({ error: 'Project not found' });
         }
-        
-        // Stop any currently running time entry
-        const stopStmt = db.prepare('UPDATE time_entries SET end_time = ? WHERE api_key_id = ? AND end_time IS NULL');
-        stopStmt.run(new Date().toISOString(), req.apiKeyId);
-        
-        // Start new time entry
+
+        // Use a transaction to atomically stop any running entries and start a new one
+        // This prevents race conditions where concurrent requests could create multiple running entries
         const startTime = new Date().toISOString();
-        const insertStmt = db.prepare('INSERT INTO time_entries (api_key_id, project_id, start_time) VALUES (?, ?, ?)');
-        const result = insertStmt.run(req.apiKeyId, parseInt(project_id), startTime);
-        
+        const startNewEntry = db.transaction((apiKeyId, projectId, start) => {
+            // Stop any currently running time entries
+            const stopStmt = db.prepare('UPDATE time_entries SET end_time = ? WHERE api_key_id = ? AND end_time IS NULL');
+            stopStmt.run(start, apiKeyId);
+
+            // Start new time entry
+            const insertStmt = db.prepare('INSERT INTO time_entries (api_key_id, project_id, start_time) VALUES (?, ?, ?)');
+            const result = insertStmt.run(apiKeyId, projectId, start);
+            return result.lastInsertRowid;
+        });
+
+        const newEntryId = startNewEntry(req.apiKeyId, parseInt(project_id), startTime);
+
         res.json({
-            id: result.lastInsertRowid,
+            id: newEntryId,
             project_id: parseInt(project_id),
             start: startTime,
             stop: null,
