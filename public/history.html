@@ -212,6 +212,97 @@
         .minimap-segment.untracked {
             background-color: rgba(102, 102, 102, 0.3);
         }
+        .day-minimap-empty {
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background-color: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .empty-day-text {
+            font-size: 0.7em;
+            color: rgba(255, 255, 255, 0.4);
+            pointer-events: none;
+        }
+        .hover-preview {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background-color: rgba(100, 150, 255, 0.3);
+            pointer-events: none;
+            border-radius: 2px;
+        }
+        .drag-selection {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background-color: rgba(100, 200, 100, 0.5);
+            pointer-events: none;
+            border-radius: 2px;
+        }
+        .project-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .project-modal.visible {
+            display: flex;
+        }
+        .modal-close-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 2em;
+            cursor: pointer;
+            padding: 10px;
+            line-height: 1;
+        }
+        .modal-close-btn:hover {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .project-modal-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 16px;
+            padding: 40px;
+            max-width: 90vw;
+            max-height: 80vh;
+        }
+        @media (orientation: portrait) {
+            .project-modal-grid {
+                grid-template-columns: repeat(3, 1fr);
+                grid-template-rows: repeat(4, 1fr);
+            }
+        }
+        .project-modal-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            min-width: 120px;
+            min-height: 80px;
+            text-align: center;
+            font-size: 1em;
+            font-weight: 500;
+            transition: transform 0.1s, opacity 0.1s;
+        }
+        .project-modal-item:hover {
+            transform: scale(1.05);
+            opacity: 0.9;
+        }
         .pagination {
             display: flex;
             justify-content: center;
@@ -293,12 +384,24 @@
         <div id="pagination" style="display: none;"></div>
     </div>
 
+    <div id="projectModal" class="project-modal">
+        <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
+        <div id="projectModalGrid" class="project-modal-grid"></div>
+    </div>
+
     <script>
         let projectColors = {}; // Map project name to color
         let allEntries = []; // Store all entries for pagination
         let currentPage = 1; // Current week page (1-indexed, 7 days per page)
         let allUniqueDates = []; // Sorted unique dates for pagination
         let expandedDays = new Set(); // Track which days have expanded entries
+        let allProjects = []; // Full project list for modal
+        let hoverPreviewElement = null; // Current hover preview element
+        let isDragging = false; // Drag state
+        let dragStartSlot = null; // Starting 30-min slot index
+        let dragEndSlot = null; // Ending 30-min slot index
+        let dragDateKey = null; // Date being dragged on
+        let pendingTimeRange = null; // Time range awaiting project selection
 
         function getCookie(name) {
             const cname = name + "=";
@@ -400,6 +503,34 @@
             const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const dayOfWeek = daysOfWeek[date.getDay()];
             return `${dateString} ${dayOfWeek}`;
+        }
+
+        function generateDisplayDates(uniqueDatesWithEntries) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayKey = formatDate(today.toISOString());
+
+            const mostRecentWithData = uniqueDatesWithEntries[0];
+            if (!mostRecentWithData) return [todayKey];
+
+            const allDates = [];
+            let currentDate = new Date(today);
+            const endDate = new Date(mostRecentWithData + 'T00:00:00');
+
+            // Generate dates from today back to most recent entry date
+            while (currentDate >= endDate) {
+                allDates.push(formatDate(currentDate.toISOString()));
+                currentDate.setDate(currentDate.getDate() - 1);
+            }
+
+            // Add older dates with entries (that are before mostRecentWithData)
+            uniqueDatesWithEntries.forEach(date => {
+                if (!allDates.includes(date)) {
+                    allDates.push(date);
+                }
+            });
+
+            return allDates;
         }
 
         function formatTime(dateString) {
@@ -630,24 +761,21 @@
 
                 const entries = await response.json();
                 document.getElementById('loadingMessage').style.display = 'none';
-                
-                if (entries.length === 0) {
-                    document.getElementById('timeEntriesList').innerHTML = '<div class="loading">No time entries found for the last week.</div>';
-                    document.getElementById('pagination').style.display = 'none';
-                    return;
-                }
 
-                // Store all entries for pagination
+                // Store all entries for pagination (may be empty)
                 allEntries = entries;
-                
-                // Calculate unique dates (sorted descending, most recent first)
+
+                // Calculate unique dates with entries (sorted descending, most recent first)
                 const datesSet = new Set();
                 allEntries.forEach(entry => {
                     datesSet.add(formatDate(entry.start));
                 });
-                allUniqueDates = Array.from(datesSet).sort((a, b) => {
+                const uniqueDatesWithEntries = Array.from(datesSet).sort((a, b) => {
                     return new Date(b) - new Date(a);
                 });
+
+                // Generate display dates including empty days between today and most recent entry
+                allUniqueDates = generateDisplayDates(uniqueDatesWithEntries);
                 
                 // Restore page if preserving, otherwise reset to first page
                 if (preservePage && savedPage !== null) {
@@ -816,6 +944,16 @@
             return `<div class="day-minimap" data-date-key="${dateKey}" onclick="toggleDayEntries('${dateKey}')">${segmentsHtml}</div>`;
         }
 
+        function renderEmptyDayMinimap(dateKey) {
+            return `
+                <div class="day-minimap day-minimap-empty"
+                     data-date-key="${dateKey}"
+                     data-empty="true">
+                    <span class="empty-day-text">click to add</span>
+                </div>
+            `;
+        }
+
         function renderTimeEntry(entry) {
             const isRunning = !entry.stop || entry.duration < 0;
             
@@ -865,8 +1003,8 @@
         }
 
         function renderEntries() {
-            if (allEntries.length === 0 || allUniqueDates.length === 0) {
-                document.getElementById('timeEntriesList').innerHTML = '<div class="loading">No time entries found for the last week.</div>';
+            if (allUniqueDates.length === 0) {
+                document.getElementById('timeEntriesList').innerHTML = '<div class="loading">No time entries found.</div>';
                 document.getElementById('pagination').style.display = 'none';
                 return;
             }
@@ -1031,13 +1169,16 @@
                     // Close day entries container
                     entriesHtml += `</div>`;
                 } else {
-                    // No entries for this day (shouldn't happen, but handle gracefully)
+                    // No entries for this day - render empty minimap for adding entries
                     entriesHtml += `<div class="date-header">${formatDateWithDayOfWeek(dateKey)}</div>`;
-                    entriesHtml += `<div class="loading">No time entries found for this day.</div>`;
+                    entriesHtml += renderEmptyDayMinimap(dateKey);
                 }
             });
 
             document.getElementById('timeEntriesList').innerHTML = entriesHtml;
+
+            // Attach event listeners for empty day interactions
+            attachEmptyDayListeners();
 
             // Render pagination controls if there are more than 1 page
             if (totalPages > 1) {
@@ -1187,21 +1328,352 @@
             }
         }
 
+        // Empty day interaction handlers
+        function attachEmptyDayListeners() {
+            const emptyMinimaps = document.querySelectorAll('.day-minimap-empty');
+            emptyMinimaps.forEach(minimap => {
+                minimap.addEventListener('mouseenter', handleEmptyDayMouseEnter);
+                minimap.addEventListener('mousemove', handleEmptyDayMouseMove);
+                minimap.addEventListener('mouseleave', handleEmptyDayMouseLeave);
+                minimap.addEventListener('mousedown', handleEmptyDayMouseDown);
+            });
+
+            // Global listeners for drag
+            document.addEventListener('mousemove', handleDragMove);
+            document.addEventListener('mouseup', handleDragEnd);
+        }
+
+        function getSlotFromMousePosition(minimap, mouseX) {
+            const rect = minimap.getBoundingClientRect();
+            const relativeX = mouseX - rect.left;
+            const percentage = Math.max(0, Math.min(1, relativeX / rect.width));
+            // 48 slots of 30 minutes each
+            return Math.floor(percentage * 48);
+        }
+
+        function handleEmptyDayMouseEnter(e) {
+            // Show text when entering
+            const minimap = e.currentTarget;
+            const textElement = minimap.querySelector('.empty-day-text');
+            if (textElement && !isDragging) {
+                textElement.style.display = 'inline';
+            }
+        }
+
+        function handleEmptyDayMouseMove(e) {
+            if (isDragging) return;
+
+            const minimap = e.currentTarget;
+            const slot = getSlotFromMousePosition(minimap, e.clientX);
+
+            // Hide text when showing preview
+            const textElement = minimap.querySelector('.empty-day-text');
+            if (textElement) {
+                textElement.style.display = 'none';
+            }
+
+            // Remove existing preview
+            if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                minimap.removeChild(hoverPreviewElement);
+            }
+
+            // Create new preview for one slot (30 min)
+            hoverPreviewElement = document.createElement('div');
+            hoverPreviewElement.className = 'hover-preview';
+            const slotWidth = 100 / 48;
+            hoverPreviewElement.style.left = `${slot * slotWidth}%`;
+            hoverPreviewElement.style.width = `${slotWidth}%`;
+            minimap.appendChild(hoverPreviewElement);
+        }
+
+        function handleEmptyDayMouseLeave(e) {
+            if (isDragging) return;
+
+            const minimap = e.currentTarget;
+
+            // Remove hover preview
+            if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                minimap.removeChild(hoverPreviewElement);
+                hoverPreviewElement = null;
+            }
+
+            // Show text again
+            const textElement = minimap.querySelector('.empty-day-text');
+            if (textElement) {
+                textElement.style.display = 'inline';
+            }
+        }
+
+        function handleEmptyDayMouseDown(e) {
+            e.preventDefault();
+            const minimap = e.currentTarget;
+            const slot = getSlotFromMousePosition(minimap, e.clientX);
+            const dateKey = minimap.getAttribute('data-date-key');
+
+            isDragging = true;
+            dragStartSlot = slot;
+            dragEndSlot = slot;
+            dragDateKey = dateKey;
+
+            // Hide text
+            const textElement = minimap.querySelector('.empty-day-text');
+            if (textElement) {
+                textElement.style.display = 'none';
+            }
+
+            // Remove hover preview, create drag selection
+            if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                minimap.removeChild(hoverPreviewElement);
+                hoverPreviewElement = null;
+            }
+
+            updateSelectionVisual(minimap);
+        }
+
+        function handleDragMove(e) {
+            if (!isDragging || !dragDateKey) return;
+
+            const minimap = document.querySelector(`.day-minimap-empty[data-date-key="${dragDateKey}"]`);
+            if (!minimap) return;
+
+            const slot = getSlotFromMousePosition(minimap, e.clientX);
+            dragEndSlot = Math.max(0, Math.min(47, slot));
+            updateSelectionVisual(minimap);
+        }
+
+        function handleDragEnd(e) {
+            if (!isDragging || !dragDateKey) return;
+
+            const minimap = document.querySelector(`.day-minimap-empty[data-date-key="${dragDateKey}"]`);
+
+            // Calculate time range
+            const startSlot = Math.min(dragStartSlot, dragEndSlot);
+            const endSlot = Math.max(dragStartSlot, dragEndSlot) + 1; // +1 because end is exclusive
+
+            const dateKey = dragDateKey;
+
+            // Reset drag state
+            isDragging = false;
+            dragStartSlot = null;
+            dragEndSlot = null;
+            dragDateKey = null;
+
+            // Remove selection visual
+            if (minimap) {
+                const selection = minimap.querySelector('.drag-selection');
+                if (selection) {
+                    minimap.removeChild(selection);
+                }
+            }
+
+            // Calculate actual times
+            const [year, month, day] = dateKey.split('-').map(Number);
+            const startDate = new Date(year, month - 1, day);
+            startDate.setMinutes(startSlot * 30);
+            const endDate = new Date(year, month - 1, day);
+            endDate.setMinutes(endSlot * 30);
+
+            pendingTimeRange = {
+                startTime: startDate.toISOString(),
+                endTime: endDate.toISOString(),
+                dateKey: dateKey
+            };
+
+            showProjectModal();
+        }
+
+        function updateSelectionVisual(minimap) {
+            // Remove existing selection
+            const existingSelection = minimap.querySelector('.drag-selection');
+            if (existingSelection) {
+                minimap.removeChild(existingSelection);
+            }
+
+            // Create selection element
+            const selection = document.createElement('div');
+            selection.className = 'drag-selection';
+            const slotWidth = 100 / 48;
+            const startSlot = Math.min(dragStartSlot, dragEndSlot);
+            const endSlot = Math.max(dragStartSlot, dragEndSlot);
+            const width = (endSlot - startSlot + 1) * slotWidth;
+            selection.style.left = `${startSlot * slotWidth}%`;
+            selection.style.width = `${width}%`;
+            minimap.appendChild(selection);
+        }
+
+        function showProjectModal() {
+            const modal = document.getElementById('projectModal');
+            const grid = document.getElementById('projectModalGrid');
+
+            // Build project grid
+            let gridHtml = '';
+            allProjects.forEach(project => {
+                const color = project.color || '#D15540';
+                gridHtml += `
+                    <div class="project-modal-item"
+                         style="background-color: ${color};"
+                         onclick="selectProject(${project.id}, '${project.name.replace(/'/g, "\\'")}', '${color}')">
+                        ${project.name}
+                    </div>
+                `;
+            });
+
+            grid.innerHTML = gridHtml;
+            modal.classList.add('visible');
+
+            // Add close button handler
+            document.getElementById('modalCloseBtn').onclick = hideProjectModal;
+        }
+
+        function hideProjectModal() {
+            const modal = document.getElementById('projectModal');
+            modal.classList.remove('visible');
+            pendingTimeRange = null;
+
+            // Clean up any selection visuals
+            const emptyMinimaps = document.querySelectorAll('.day-minimap-empty');
+            emptyMinimaps.forEach(minimap => {
+                const selection = minimap.querySelector('.drag-selection');
+                if (selection) {
+                    minimap.removeChild(selection);
+                }
+            });
+        }
+
+        function getEntriesForDate(dateKey) {
+            return allEntries.filter(entry => formatDate(entry.start) === dateKey);
+        }
+
+        function adjustForOverlaps(startStr, endStr, existingEntries) {
+            let newStart = new Date(startStr);
+            let newEnd = new Date(endStr);
+
+            for (const entry of existingEntries) {
+                const entryStart = new Date(entry.start);
+                const entryEnd = entry.stop ? new Date(entry.stop) : new Date();
+
+                if (newStart < entryEnd && newEnd > entryStart) {
+                    // Overlap detected - shrink new entry
+                    if (entryStart <= newStart && entryEnd >= newEnd) {
+                        return null; // Fully covered
+                    } else if (entryEnd > newStart && entryEnd < newEnd) {
+                        newStart = new Date(entryEnd);
+                    } else if (entryStart > newStart && entryStart < newEnd) {
+                        newEnd = new Date(entryStart);
+                    }
+                }
+            }
+
+            return newStart >= newEnd ? null : {
+                start: newStart.toISOString(),
+                end: newEnd.toISOString()
+            };
+        }
+
+        async function createTimeEntry(projectId, startTime, endTime) {
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                throw new Error('No API key found');
+            }
+
+            // POST to create entry
+            const createResponse = await fetch('/api/time-entries', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'X-API-Key': apiKey
+                },
+                body: JSON.stringify({ project_id: projectId })
+            });
+
+            if (!createResponse.ok) {
+                throw new Error('Failed to create time entry');
+            }
+
+            const newEntry = await createResponse.json();
+
+            // PUT to set times
+            const updateResponse = await fetch(`/api/time-entries/${newEntry.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'X-API-Key': apiKey
+                },
+                body: JSON.stringify({
+                    start_time: startTime,
+                    end_time: endTime
+                })
+            });
+
+            if (!updateResponse.ok) {
+                throw new Error('Failed to update time entry times');
+            }
+
+            return await updateResponse.json();
+        }
+
+        async function selectProject(projectId, projectName, projectColor) {
+            if (!pendingTimeRange) {
+                hideProjectModal();
+                return;
+            }
+
+            const { startTime, endTime, dateKey } = pendingTimeRange;
+
+            // Get existing entries for overlap check
+            const existingEntries = getEntriesForDate(dateKey);
+            const adjustedRange = adjustForOverlaps(startTime, endTime, existingEntries);
+
+            if (!adjustedRange) {
+                alert('Selected time is fully covered by existing entries.');
+                hideProjectModal();
+                return;
+            }
+
+            try {
+                await createTimeEntry(projectId, adjustedRange.start, adjustedRange.end);
+                hideProjectModal();
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error creating time entry:', error);
+                alert(`Error creating time entry: ${error.message}`);
+                hideProjectModal();
+            }
+        }
+
         // Load projects first to get colors, then load time entries
-        fetchProjects().then(() => {
+        fetchProjects().then(async () => {
+            // Also fetch full project list for modal
+            try {
+                const response = await fetch('/api/projects', { headers: getApiHeaders() });
+                if (response.ok) {
+                    allProjects = await response.json();
+                }
+            } catch (error) {
+                console.error('Error fetching projects for modal:', error);
+            }
             loadTimeEntries();
         });
 
         // Set up interval to update running entries every second
         let runningEntriesInterval = setInterval(updateRunningEntries, 1000);
 
-        // Navigate to main page on Escape key
+        // Navigate to main page on Escape key (or close modal if open)
         // Use capture phase and window to ensure it works regardless of focus
         window.addEventListener('keydown', function(event) {
             if (event.key === 'Escape' || event.keyCode === 27) {
-                event.preventDefault();
-                event.stopPropagation();
-                window.location.href = '/';
+                const modal = document.getElementById('projectModal');
+                if (modal && modal.classList.contains('visible')) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    hideProjectModal();
+                } else {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.location.href = '/';
+                }
             }
         }, true);
     </script>
