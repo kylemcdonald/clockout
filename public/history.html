@@ -235,20 +235,25 @@
             pointer-events: none;
             border-radius: 2px;
         }
-        .time-indicator {
+        .time-indicator-start,
+        .time-indicator-end {
             position: absolute;
             top: 100%;
             margin-top: 4px;
-            left: 50%;
-            transform: translateX(-50%);
             background-color: rgba(0, 0, 0, 0.9);
             color: white;
-            padding: 4px 10px;
+            padding: 4px 8px;
             border-radius: 4px;
             font-size: 0.8em;
             white-space: nowrap;
             pointer-events: none;
             z-index: 100;
+        }
+        .time-indicator-start {
+            transform: translateX(-100%);
+        }
+        .time-indicator-end {
+            transform: translateX(0);
         }
         .project-modal {
             position: fixed;
@@ -1413,7 +1418,8 @@
         }
 
         // Track if we're in add-entry mode vs click-to-expand mode
-        let timeIndicatorElement = null;
+        let timeIndicatorStart = null;
+        let timeIndicatorEnd = null;
 
         // Minimap interaction handlers - work on ALL minimaps
         function attachEmptyDayListeners() {
@@ -1477,10 +1483,7 @@
                     minimap.removeChild(hoverPreviewElement);
                     hoverPreviewElement = null;
                 }
-                if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
-                    minimap.removeChild(timeIndicatorElement);
-                    timeIndicatorElement = null;
-                }
+                removeTimeIndicators(minimap);
                 minimap.style.cursor = 'pointer';
                 return;
             }
@@ -1500,19 +1503,8 @@
             hoverPreviewElement.style.width = `${slotWidth}%`;
             minimap.appendChild(hoverPreviewElement);
 
-            // Show time indicator
-            if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
-                minimap.removeChild(timeIndicatorElement);
-            }
-            timeIndicatorElement = document.createElement('div');
-            timeIndicatorElement.className = 'time-indicator';
-            timeIndicatorElement.textContent = `${slotToTimeString(slot)} - ${slotToTimeString(slot + 1)}`;
-            // Position at mouse location
-            const rect = minimap.getBoundingClientRect();
-            const relativeX = e.clientX - rect.left;
-            timeIndicatorElement.style.left = `${relativeX}px`;
-            timeIndicatorElement.style.transform = 'translateX(-50%)';
-            minimap.appendChild(timeIndicatorElement);
+            // Show time indicators at edges of selection
+            updateTimeIndicators(minimap, slot, slot);
         }
 
         function handleMinimapMouseLeave(e) {
@@ -1526,11 +1518,8 @@
                 hoverPreviewElement = null;
             }
 
-            // Remove time indicator
-            if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
-                minimap.removeChild(timeIndicatorElement);
-                timeIndicatorElement = null;
-            }
+            // Remove time indicators
+            removeTimeIndicators(minimap);
         }
 
         function handleMinimapMouseDown(e) {
@@ -1589,16 +1578,13 @@
             dragEndSlot = null;
             dragDateKey = null;
 
-            // Remove selection visual and time indicator
+            // Remove selection visual and time indicators
             if (minimap) {
                 const selection = minimap.querySelector('.drag-selection');
                 if (selection) {
                     minimap.removeChild(selection);
                 }
-                if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
-                    minimap.removeChild(timeIndicatorElement);
-                    timeIndicatorElement = null;
-                }
+                removeTimeIndicators(minimap);
             }
 
             // Calculate actual times
@@ -1615,6 +1601,40 @@
             };
 
             showProjectModal();
+        }
+
+        function removeTimeIndicators(minimap) {
+            if (timeIndicatorStart && timeIndicatorStart.parentNode === minimap) {
+                minimap.removeChild(timeIndicatorStart);
+                timeIndicatorStart = null;
+            }
+            if (timeIndicatorEnd && timeIndicatorEnd.parentNode === minimap) {
+                minimap.removeChild(timeIndicatorEnd);
+                timeIndicatorEnd = null;
+            }
+        }
+
+        function updateTimeIndicators(minimap, startSlot, endSlot) {
+            const slotWidth = 100 / 48;
+            const actualStart = Math.min(startSlot, endSlot);
+            const actualEnd = Math.max(startSlot, endSlot);
+
+            // Remove existing indicators
+            removeTimeIndicators(minimap);
+
+            // Create start time indicator (right-aligned on left edge)
+            timeIndicatorStart = document.createElement('div');
+            timeIndicatorStart.className = 'time-indicator-start';
+            timeIndicatorStart.textContent = slotToTimeString(actualStart);
+            timeIndicatorStart.style.left = `${actualStart * slotWidth}%`;
+            minimap.appendChild(timeIndicatorStart);
+
+            // Create end time indicator (left-aligned on right edge)
+            timeIndicatorEnd = document.createElement('div');
+            timeIndicatorEnd.className = 'time-indicator-end';
+            timeIndicatorEnd.textContent = slotToTimeString(actualEnd + 1);
+            timeIndicatorEnd.style.left = `${(actualEnd + 1) * slotWidth}%`;
+            minimap.appendChild(timeIndicatorEnd);
         }
 
         function updateSelectionVisual(minimap) {
@@ -1635,18 +1655,8 @@
             selection.style.width = `${width}%`;
             minimap.appendChild(selection);
 
-            // Update time indicator during drag
-            if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
-                minimap.removeChild(timeIndicatorElement);
-            }
-            timeIndicatorElement = document.createElement('div');
-            timeIndicatorElement.className = 'time-indicator';
-            timeIndicatorElement.textContent = `${slotToTimeString(startSlot)} - ${slotToTimeString(endSlot + 1)}`;
-            // Position at center of selection
-            const centerPercent = (startSlot + (endSlot - startSlot + 1) / 2) * slotWidth;
-            timeIndicatorElement.style.left = `${centerPercent}%`;
-            timeIndicatorElement.style.transform = 'translateX(-50%)';
-            minimap.appendChild(timeIndicatorElement);
+            // Update time indicators at edges
+            updateTimeIndicators(minimap, dragStartSlot, dragEndSlot);
         }
 
         function showProjectModal() {
@@ -1685,10 +1695,7 @@
                 if (selection) {
                     minimap.removeChild(selection);
                 }
-                const indicator = minimap.querySelector('.time-indicator');
-                if (indicator) {
-                    minimap.removeChild(indicator);
-                }
+                removeTimeIndicators(minimap);
             });
         }
 
