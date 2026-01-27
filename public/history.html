@@ -215,14 +215,6 @@
         .day-minimap-empty {
             border: 1px solid rgba(255, 255, 255, 0.3);
             background-color: transparent;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .empty-day-text {
-            font-size: 0.7em;
-            color: rgba(255, 255, 255, 0.4);
-            pointer-events: none;
         }
         .hover-preview {
             position: absolute;
@@ -239,6 +231,20 @@
             background-color: rgba(100, 200, 100, 0.5);
             pointer-events: none;
             border-radius: 2px;
+        }
+        .time-indicator {
+            position: absolute;
+            top: -1.8em;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 0.75em;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 10;
         }
         .project-modal {
             position: fixed;
@@ -272,17 +278,18 @@
         }
         .project-modal-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             grid-template-rows: repeat(3, 1fr);
             gap: 16px;
             padding: 40px;
-            max-width: 90vw;
-            max-height: 80vh;
+            width: 90vw;
+            height: 80vh;
+            max-width: 1200px;
         }
         @media (orientation: portrait) {
             .project-modal-grid {
                 grid-template-columns: repeat(3, 1fr);
-                grid-template-rows: repeat(4, 1fr);
+                grid-template-rows: repeat(5, 1fr);
             }
         }
         .project-modal-item {
@@ -292,10 +299,8 @@
             padding: 20px;
             border-radius: 8px;
             cursor: pointer;
-            min-width: 120px;
-            min-height: 80px;
             text-align: center;
-            font-size: 1em;
+            font-size: 1.5em;
             font-weight: 500;
             transition: transform 0.1s, opacity 0.1s;
         }
@@ -941,16 +946,41 @@
                 segmentsHtml += `<div class="minimap-segment ${segment.type === 'gap' ? 'untracked' : ''}" style="left: ${segment.left}%; width: ${segment.width}%; background-color: ${segment.color};"></div>`;
             });
             
-            return `<div class="day-minimap" data-date-key="${dateKey}" onclick="toggleDayEntries('${dateKey}')">${segmentsHtml}</div>`;
+            return `<div class="day-minimap" data-date-key="${dateKey}">${segmentsHtml}</div>`;
         }
 
-        function renderEmptyDayMinimap(dateKey) {
+        function renderEmptyDayMinimap(dateKey, bleedingEntries) {
+            // Render bleeding entries from previous days
+            let segmentsHtml = '';
+            if (bleedingEntries && bleedingEntries.length > 0) {
+                const dayStart = new Date(dateKey + 'T00:00:00');
+                const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+                const dayDuration = dayEnd.getTime() - dayStart.getTime();
+
+                bleedingEntries.forEach(entry => {
+                    const entryStart = new Date(entry.start);
+                    const entryEnd = entry.stop && entry.duration >= 0
+                        ? new Date(entry.stop)
+                        : new Date();
+
+                    const visibleStart = Math.max(entryStart.getTime(), dayStart.getTime());
+                    const visibleEnd = Math.min(entryEnd.getTime(), dayEnd.getTime());
+
+                    if (visibleStart < visibleEnd) {
+                        const leftPercent = ((visibleStart - dayStart.getTime()) / dayDuration) * 100;
+                        const widthPercent = ((visibleEnd - visibleStart) / dayDuration) * 100;
+                        const projectName = entry.name || 'Unknown Project';
+                        const projectColor = projectColors[projectName] || '#D15540';
+
+                        segmentsHtml += `<div class="minimap-segment" style="left: ${leftPercent}%; width: ${widthPercent}%; background-color: ${projectColor};"></div>`;
+                    }
+                });
+            }
+
             return `
                 <div class="day-minimap day-minimap-empty"
                      data-date-key="${dateKey}"
-                     data-empty="true">
-                    <span class="empty-day-text">click to add</span>
-                </div>
+                     data-empty="true">${segmentsHtml}</div>
             `;
         }
 
@@ -1169,9 +1199,21 @@
                     // Close day entries container
                     entriesHtml += `</div>`;
                 } else {
-                    // No entries for this day - render empty minimap for adding entries
+                    // No entries starting on this day - check for bleeding entries from previous days
+                    const dayStart = new Date(dateKey + 'T00:00:00');
+                    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+                    const bleedingEntries = allEntries.filter(entry => {
+                        const entryStart = new Date(entry.start);
+                        const entryEnd = entry.stop && entry.duration >= 0
+                            ? new Date(entry.stop)
+                            : new Date();
+                        // Entry started before this day but ends during or after this day starts
+                        return entryStart < dayStart && entryEnd > dayStart;
+                    });
+
                     entriesHtml += `<div class="date-header">${formatDateWithDayOfWeek(dateKey)}</div>`;
-                    entriesHtml += renderEmptyDayMinimap(dateKey);
+                    entriesHtml += renderEmptyDayMinimap(dateKey, bleedingEntries);
                 }
             });
 
@@ -1328,17 +1370,24 @@
             }
         }
 
-        // Empty day interaction handlers
+        // Track if we're in add-entry mode vs click-to-expand mode
+        let timeIndicatorElement = null;
+
+        // Minimap interaction handlers - work on ALL minimaps
         function attachEmptyDayListeners() {
-            const emptyMinimaps = document.querySelectorAll('.day-minimap-empty');
-            emptyMinimaps.forEach(minimap => {
-                minimap.addEventListener('mouseenter', handleEmptyDayMouseEnter);
-                minimap.addEventListener('mousemove', handleEmptyDayMouseMove);
-                minimap.addEventListener('mouseleave', handleEmptyDayMouseLeave);
-                minimap.addEventListener('mousedown', handleEmptyDayMouseDown);
+            // Attach to ALL minimaps, not just empty ones
+            const allMinimaps = document.querySelectorAll('.day-minimap');
+            allMinimaps.forEach(minimap => {
+                // Remove old onclick if present
+                minimap.removeAttribute('onclick');
+                minimap.addEventListener('mousemove', handleMinimapMouseMove);
+                minimap.addEventListener('mouseleave', handleMinimapMouseLeave);
+                minimap.addEventListener('mousedown', handleMinimapMouseDown);
             });
 
             // Global listeners for drag
+            document.removeEventListener('mousemove', handleDragMove);
+            document.removeEventListener('mouseup', handleDragEnd);
             document.addEventListener('mousemove', handleDragMove);
             document.addEventListener('mouseup', handleDragEnd);
         }
@@ -1351,26 +1400,50 @@
             return Math.floor(percentage * 48);
         }
 
-        function handleEmptyDayMouseEnter(e) {
-            // Show text when entering
-            const minimap = e.currentTarget;
-            const textElement = minimap.querySelector('.empty-day-text');
-            if (textElement && !isDragging) {
-                textElement.style.display = 'inline';
-            }
+        function slotToTimeString(slot) {
+            const hours = Math.floor(slot / 2);
+            const minutes = (slot % 2) * 30;
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
         }
 
-        function handleEmptyDayMouseMove(e) {
+        function isClickOnSegment(minimap, mouseX) {
+            const rect = minimap.getBoundingClientRect();
+            const relativeX = mouseX - rect.left;
+            const percentage = (relativeX / rect.width) * 100;
+
+            const segments = minimap.querySelectorAll('.minimap-segment');
+            for (const segment of segments) {
+                const left = parseFloat(segment.style.left);
+                const width = parseFloat(segment.style.width);
+                if (percentage >= left && percentage <= left + width) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function handleMinimapMouseMove(e) {
             if (isDragging) return;
 
             const minimap = e.currentTarget;
             const slot = getSlotFromMousePosition(minimap, e.clientX);
 
-            // Hide text when showing preview
-            const textElement = minimap.querySelector('.empty-day-text');
-            if (textElement) {
-                textElement.style.display = 'none';
+            // Check if hovering over a segment
+            if (isClickOnSegment(minimap, e.clientX)) {
+                // Remove hover preview if over a segment
+                if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                    minimap.removeChild(hoverPreviewElement);
+                    hoverPreviewElement = null;
+                }
+                if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
+                    minimap.removeChild(timeIndicatorElement);
+                    timeIndicatorElement = null;
+                }
+                minimap.style.cursor = 'pointer';
+                return;
             }
+
+            minimap.style.cursor = 'crosshair';
 
             // Remove existing preview
             if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
@@ -1384,9 +1457,23 @@
             hoverPreviewElement.style.left = `${slot * slotWidth}%`;
             hoverPreviewElement.style.width = `${slotWidth}%`;
             minimap.appendChild(hoverPreviewElement);
+
+            // Show time indicator
+            if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
+                minimap.removeChild(timeIndicatorElement);
+            }
+            timeIndicatorElement = document.createElement('div');
+            timeIndicatorElement.className = 'time-indicator';
+            timeIndicatorElement.textContent = `${slotToTimeString(slot)} - ${slotToTimeString(slot + 1)}`;
+            // Position at mouse location
+            const rect = minimap.getBoundingClientRect();
+            const relativeX = e.clientX - rect.left;
+            timeIndicatorElement.style.left = `${relativeX}px`;
+            timeIndicatorElement.style.transform = 'translateX(-50%)';
+            minimap.appendChild(timeIndicatorElement);
         }
 
-        function handleEmptyDayMouseLeave(e) {
+        function handleMinimapMouseLeave(e) {
             if (isDragging) return;
 
             const minimap = e.currentTarget;
@@ -1397,29 +1484,31 @@
                 hoverPreviewElement = null;
             }
 
-            // Show text again
-            const textElement = minimap.querySelector('.empty-day-text');
-            if (textElement) {
-                textElement.style.display = 'inline';
+            // Remove time indicator
+            if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
+                minimap.removeChild(timeIndicatorElement);
+                timeIndicatorElement = null;
             }
         }
 
-        function handleEmptyDayMouseDown(e) {
-            e.preventDefault();
+        function handleMinimapMouseDown(e) {
             const minimap = e.currentTarget;
-            const slot = getSlotFromMousePosition(minimap, e.clientX);
             const dateKey = minimap.getAttribute('data-date-key');
+
+            // If clicking on a segment, toggle expand instead of adding entry
+            if (isClickOnSegment(minimap, e.clientX)) {
+                toggleDayEntries(dateKey);
+                return;
+            }
+
+            // Otherwise, start drag to add entry
+            e.preventDefault();
+            const slot = getSlotFromMousePosition(minimap, e.clientX);
 
             isDragging = true;
             dragStartSlot = slot;
             dragEndSlot = slot;
             dragDateKey = dateKey;
-
-            // Hide text
-            const textElement = minimap.querySelector('.empty-day-text');
-            if (textElement) {
-                textElement.style.display = 'none';
-            }
 
             // Remove hover preview, create drag selection
             if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
@@ -1433,7 +1522,7 @@
         function handleDragMove(e) {
             if (!isDragging || !dragDateKey) return;
 
-            const minimap = document.querySelector(`.day-minimap-empty[data-date-key="${dragDateKey}"]`);
+            const minimap = document.querySelector(`.day-minimap[data-date-key="${dragDateKey}"]`);
             if (!minimap) return;
 
             const slot = getSlotFromMousePosition(minimap, e.clientX);
@@ -1444,7 +1533,7 @@
         function handleDragEnd(e) {
             if (!isDragging || !dragDateKey) return;
 
-            const minimap = document.querySelector(`.day-minimap-empty[data-date-key="${dragDateKey}"]`);
+            const minimap = document.querySelector(`.day-minimap[data-date-key="${dragDateKey}"]`);
 
             // Calculate time range
             const startSlot = Math.min(dragStartSlot, dragEndSlot);
@@ -1458,11 +1547,15 @@
             dragEndSlot = null;
             dragDateKey = null;
 
-            // Remove selection visual
+            // Remove selection visual and time indicator
             if (minimap) {
                 const selection = minimap.querySelector('.drag-selection');
                 if (selection) {
                     minimap.removeChild(selection);
+                }
+                if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
+                    minimap.removeChild(timeIndicatorElement);
+                    timeIndicatorElement = null;
                 }
             }
 
@@ -1499,6 +1592,19 @@
             selection.style.left = `${startSlot * slotWidth}%`;
             selection.style.width = `${width}%`;
             minimap.appendChild(selection);
+
+            // Update time indicator during drag
+            if (timeIndicatorElement && timeIndicatorElement.parentNode === minimap) {
+                minimap.removeChild(timeIndicatorElement);
+            }
+            timeIndicatorElement = document.createElement('div');
+            timeIndicatorElement.className = 'time-indicator';
+            timeIndicatorElement.textContent = `${slotToTimeString(startSlot)} - ${slotToTimeString(endSlot + 1)}`;
+            // Position at center of selection
+            const centerPercent = (startSlot + (endSlot - startSlot + 1) / 2) * slotWidth;
+            timeIndicatorElement.style.left = `${centerPercent}%`;
+            timeIndicatorElement.style.transform = 'translateX(-50%)';
+            minimap.appendChild(timeIndicatorElement);
         }
 
         function showProjectModal() {
@@ -1530,18 +1636,30 @@
             modal.classList.remove('visible');
             pendingTimeRange = null;
 
-            // Clean up any selection visuals
-            const emptyMinimaps = document.querySelectorAll('.day-minimap-empty');
-            emptyMinimaps.forEach(minimap => {
+            // Clean up any selection visuals on all minimaps
+            const allMinimaps = document.querySelectorAll('.day-minimap');
+            allMinimaps.forEach(minimap => {
                 const selection = minimap.querySelector('.drag-selection');
                 if (selection) {
                     minimap.removeChild(selection);
+                }
+                const indicator = minimap.querySelector('.time-indicator');
+                if (indicator) {
+                    minimap.removeChild(indicator);
                 }
             });
         }
 
         function getEntriesForDate(dateKey) {
-            return allEntries.filter(entry => formatDate(entry.start) === dateKey);
+            const dayStart = new Date(dateKey + 'T00:00:00');
+            const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+            return allEntries.filter(entry => {
+                const entryStart = new Date(entry.start);
+                const entryEnd = entry.stop ? new Date(entry.stop) : new Date();
+                // Include entries that overlap with this day at all
+                return entryStart < dayEnd && entryEnd > dayStart;
+            });
         }
 
         function adjustForOverlaps(startStr, endStr, existingEntries) {
