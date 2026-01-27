@@ -194,6 +194,10 @@
             overflow: hidden;
             cursor: pointer;
         }
+        .day-minimap.show-indicator {
+            overflow: visible;
+            margin-top: 2em;
+        }
         .day-minimap:hover {
             background-color: rgba(255, 255, 255, 0.08);
         }
@@ -1477,11 +1481,13 @@
                     minimap.removeChild(timeIndicatorElement);
                     timeIndicatorElement = null;
                 }
+                minimap.classList.remove('show-indicator');
                 minimap.style.cursor = 'pointer';
                 return;
             }
 
             minimap.style.cursor = 'crosshair';
+            minimap.classList.add('show-indicator');
 
             // Remove existing preview
             if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
@@ -1527,6 +1533,8 @@
                 minimap.removeChild(timeIndicatorElement);
                 timeIndicatorElement = null;
             }
+
+            minimap.classList.remove('show-indicator');
         }
 
         function handleMinimapMouseDown(e) {
@@ -1595,6 +1603,7 @@
                     minimap.removeChild(timeIndicatorElement);
                     timeIndicatorElement = null;
                 }
+                minimap.classList.remove('show-indicator');
             }
 
             // Calculate actual times
