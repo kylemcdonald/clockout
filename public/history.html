@@ -189,14 +189,13 @@
             width: 100%;
             background-color: rgba(255, 255, 255, 0.05);
             border-radius: 2px;
-            margin-bottom: 16px;
+            margin-bottom: 2.5em;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
             cursor: pointer;
         }
-        .day-minimap.show-indicator {
-            overflow: visible;
-            margin-top: 2em;
+        .minimap-segment {
+            overflow: hidden;
         }
         .day-minimap:hover {
             background-color: rgba(255, 255, 255, 0.08);
@@ -238,17 +237,18 @@
         }
         .time-indicator {
             position: absolute;
-            top: -1.8em;
+            top: 100%;
+            margin-top: 4px;
             left: 50%;
             transform: translateX(-50%);
-            background-color: rgba(0, 0, 0, 0.8);
+            background-color: rgba(0, 0, 0, 0.9);
             color: white;
-            padding: 2px 8px;
-            border-radius: 3px;
-            font-size: 0.75em;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
             white-space: nowrap;
             pointer-events: none;
-            z-index: 10;
+            z-index: 100;
         }
         .project-modal {
             position: fixed;
@@ -1481,13 +1481,11 @@
                     minimap.removeChild(timeIndicatorElement);
                     timeIndicatorElement = null;
                 }
-                minimap.classList.remove('show-indicator');
                 minimap.style.cursor = 'pointer';
                 return;
             }
 
             minimap.style.cursor = 'crosshair';
-            minimap.classList.add('show-indicator');
 
             // Remove existing preview
             if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
@@ -1533,8 +1531,6 @@
                 minimap.removeChild(timeIndicatorElement);
                 timeIndicatorElement = null;
             }
-
-            minimap.classList.remove('show-indicator');
         }
 
         function handleMinimapMouseDown(e) {
@@ -1603,7 +1599,6 @@
                     minimap.removeChild(timeIndicatorElement);
                     timeIndicatorElement = null;
                 }
-                minimap.classList.remove('show-indicator');
             }
 
             // Calculate actual times
