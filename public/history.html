@@ -975,7 +975,9 @@
                                 left: Math.max(0, leftPercent),
                                 width: Math.min(100 - leftPercent, widthPercent),
                                 color: 'rgba(102, 102, 102, 0.3)',
-                                type: 'gap'
+                                type: 'gap',
+                                gapStart: new Date(visibleStart).toISOString(),
+                                gapEnd: new Date(visibleEnd).toISOString()
                             });
                         }
                     }
@@ -985,7 +987,8 @@
             // Generate HTML for segments
             let segmentsHtml = '';
             segments.forEach(segment => {
-                segmentsHtml += `<div class="minimap-segment ${segment.type === 'gap' ? 'untracked' : ''}" style="left: ${segment.left}%; width: ${segment.width}%; background-color: ${segment.color};"></div>`;
+                const gapAttrs = segment.type === 'gap' ? `data-gap-start="${segment.gapStart}" data-gap-end="${segment.gapEnd}"` : '';
+                segmentsHtml += `<div class="minimap-segment ${segment.type === 'gap' ? 'untracked' : ''}" ${gapAttrs} style="left: ${segment.left}%; width: ${segment.width}%; background-color: ${segment.color};"></div>`;
             });
             
             return `<div class="day-minimap" data-date-key="${dateKey}">${segmentsHtml}</div>`;
@@ -1449,7 +1452,7 @@
             return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
         }
 
-        function isClickOnSegment(minimap, mouseX) {
+        function getClickedSegment(minimap, mouseX) {
             const rect = minimap.getBoundingClientRect();
             const relativeX = mouseX - rect.left;
             const percentage = (relativeX / rect.width) * 100;
@@ -1459,10 +1462,14 @@
                 const left = parseFloat(segment.style.left);
                 const width = parseFloat(segment.style.width);
                 if (percentage >= left && percentage <= left + width) {
-                    return true;
+                    return segment;
                 }
             }
-            return false;
+            return null;
+        }
+
+        function isClickOnSegment(minimap, mouseX) {
+            return getClickedSegment(minimap, mouseX) !== null;
         }
 
         function handleMinimapMouseMove(e) {
@@ -1472,8 +1479,30 @@
             const slot = getSlotFromMousePosition(minimap, e.clientX);
 
             // Check if hovering over a segment
-            if (isClickOnSegment(minimap, e.clientX)) {
-                // Remove hover preview if over a segment
+            const hoveredSegment = getClickedSegment(minimap, e.clientX);
+            if (hoveredSegment) {
+                // If hovering over a gap, show crosshair (can add entry)
+                if (hoveredSegment.classList.contains('untracked')) {
+                    minimap.style.cursor = 'crosshair';
+                    // Show time indicators for the gap
+                    const gapStart = hoveredSegment.getAttribute('data-gap-start');
+                    const gapEnd = hoveredSegment.getAttribute('data-gap-end');
+                    if (gapStart && gapEnd) {
+                        // Calculate slots from gap times
+                        const startDate = new Date(gapStart);
+                        const endDate = new Date(gapEnd);
+                        const startSlot = startDate.getHours() * 2 + Math.floor(startDate.getMinutes() / 30);
+                        const endSlot = endDate.getHours() * 2 + Math.floor(endDate.getMinutes() / 30) - 1;
+                        updateTimeIndicators(minimap, startSlot, Math.max(startSlot, endSlot));
+                    }
+                    // Remove hover preview when over gap
+                    if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                        minimap.removeChild(hoverPreviewElement);
+                        hoverPreviewElement = null;
+                    }
+                    return;
+                }
+                // If hovering over an entry segment, show pointer
                 if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
                     minimap.removeChild(hoverPreviewElement);
                     hoverPreviewElement = null;
@@ -1521,8 +1550,31 @@
             const minimap = e.currentTarget;
             const dateKey = minimap.getAttribute('data-date-key');
 
-            // If clicking on a segment, toggle expand instead of adding entry
-            if (isClickOnSegment(minimap, e.clientX)) {
+            // Check if clicking on a segment
+            const clickedSegment = getClickedSegment(minimap, e.clientX);
+            if (clickedSegment) {
+                // If clicking on a gap (untracked), allow adding an entry there
+                if (clickedSegment.classList.contains('untracked')) {
+                    const gapStart = clickedSegment.getAttribute('data-gap-start');
+                    const gapEnd = clickedSegment.getAttribute('data-gap-end');
+                    if (gapStart && gapEnd) {
+                        // Remove hover preview and time indicators
+                        if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                            minimap.removeChild(hoverPreviewElement);
+                            hoverPreviewElement = null;
+                        }
+                        removeTimeIndicators(minimap);
+
+                        pendingTimeRange = {
+                            startTime: gapStart,
+                            endTime: gapEnd,
+                            dateKey: dateKey
+                        };
+                        showProjectModal();
+                        return;
+                    }
+                }
+                // If clicking on an entry segment, toggle expand
                 toggleDayEntries(dateKey);
                 return;
             }
