@@ -1478,31 +1478,10 @@
             const minimap = e.currentTarget;
             const slot = getSlotFromMousePosition(minimap, e.clientX);
 
-            // Check if hovering over a segment
+            // Check if hovering over an entry segment (not a gap)
             const hoveredSegment = getClickedSegment(minimap, e.clientX);
-            if (hoveredSegment) {
-                // If hovering over a gap, show crosshair (can add entry)
-                if (hoveredSegment.classList.contains('untracked')) {
-                    minimap.style.cursor = 'crosshair';
-                    // Show time indicators for the gap
-                    const gapStart = hoveredSegment.getAttribute('data-gap-start');
-                    const gapEnd = hoveredSegment.getAttribute('data-gap-end');
-                    if (gapStart && gapEnd) {
-                        // Calculate slots from gap times
-                        const startDate = new Date(gapStart);
-                        const endDate = new Date(gapEnd);
-                        const startSlot = startDate.getHours() * 2 + Math.floor(startDate.getMinutes() / 30);
-                        const endSlot = endDate.getHours() * 2 + Math.floor(endDate.getMinutes() / 30) - 1;
-                        updateTimeIndicators(minimap, startSlot, Math.max(startSlot, endSlot));
-                    }
-                    // Remove hover preview when over gap
-                    if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
-                        minimap.removeChild(hoverPreviewElement);
-                        hoverPreviewElement = null;
-                    }
-                    return;
-                }
-                // If hovering over an entry segment, show pointer
+            if (hoveredSegment && !hoveredSegment.classList.contains('untracked')) {
+                // Hovering over an entry segment - show pointer
                 if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
                     minimap.removeChild(hoverPreviewElement);
                     hoverPreviewElement = null;
@@ -1511,6 +1490,7 @@
                 minimap.style.cursor = 'pointer';
                 return;
             }
+            // Hovering over empty space or a gap - show crosshair and hover preview
 
             minimap.style.cursor = 'crosshair';
 
@@ -1550,31 +1530,10 @@
             const minimap = e.currentTarget;
             const dateKey = minimap.getAttribute('data-date-key');
 
-            // Check if clicking on a segment
+            // Check if clicking on a segment (but not a gap - gaps allow adding entries)
             const clickedSegment = getClickedSegment(minimap, e.clientX);
-            if (clickedSegment) {
-                // If clicking on a gap (untracked), allow adding an entry there
-                if (clickedSegment.classList.contains('untracked')) {
-                    const gapStart = clickedSegment.getAttribute('data-gap-start');
-                    const gapEnd = clickedSegment.getAttribute('data-gap-end');
-                    if (gapStart && gapEnd) {
-                        // Remove hover preview and time indicators
-                        if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
-                            minimap.removeChild(hoverPreviewElement);
-                            hoverPreviewElement = null;
-                        }
-                        removeTimeIndicators(minimap);
-
-                        pendingTimeRange = {
-                            startTime: gapStart,
-                            endTime: gapEnd,
-                            dateKey: dateKey
-                        };
-                        showProjectModal();
-                        return;
-                    }
-                }
-                // If clicking on an entry segment, toggle expand
+            if (clickedSegment && !clickedSegment.classList.contains('untracked')) {
+                // Clicking on an entry segment toggles expand
                 toggleDayEntries(dateKey);
                 return;
             }
