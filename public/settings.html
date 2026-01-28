@@ -298,6 +298,7 @@
                 <input type="number" id="newProjectHours" placeholder="Target hours" step="0.1" min="0">
                 <button onclick="addProject()">Add Project</button>
             </div>
+            <button onclick="randomizeColors()" style="margin-top: 1em;">Randomize Colors</button>
         </div>
     </div>
     <script>
@@ -665,6 +666,36 @@
             }
         }
 
+        async function randomizeColors() {
+            if (!apiToken) {
+                alert('Please enter an API key first.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/projects/randomize-colors', {
+                    method: 'POST',
+                    headers: getApiHeaders()
+                });
+
+                if (response.status === 401) {
+                    alert('Invalid API key.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.error || 'Failed to randomize colors.');
+                    return;
+                }
+
+                loadProjectsList();
+            } catch (error) {
+                console.error('Error randomizing colors:', error);
+                alert('Error randomizing colors.');
+            }
+        }
+
         // Load API token and projects on page load
         document.getElementById('apiToken').value = apiToken;
         if (apiToken) {
@@ -724,6 +755,7 @@
                 case 'project_created':
                 case 'project_updated':
                 case 'project_deleted':
+                case 'projects_updated':
                     // Refresh projects list
                     loadProjectsList();
                     break;

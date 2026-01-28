@@ -199,7 +199,7 @@ app.post('/api/projects', requireApiKey, (req, res) => {
             return res.status(400).json({ error: 'Name and target_hours are required' });
         }
         
-        const colors = ['#D15540', '#9E9A2F', '#D88045', '#D7524E', '#3fc30f', '#5EB868', '#439D43', '#9F509F'];
+        const colors = ['#f94144', '#f3722c', '#f8961e', '#f9844a', '#f9c74f', '#90be6d', '#43aa8b', '#4d908e', '#577590', '#277da1'];
         const projectColor = color || colors[Math.floor(Math.random() * colors.length)];
         
         const stmt = db.prepare('INSERT INTO projects (api_key_id, name, target_hours, color) VALUES (?, ?, ?, ?)');
@@ -251,6 +251,36 @@ app.put('/api/projects/:id', requireApiKey, (req, res) => {
             return res.status(409).json({ error: 'Project with this name already exists' });
         }
         console.error('Error updating project:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Randomize project colors
+app.post('/api/projects/randomize-colors', requireApiKey, (req, res) => {
+    try {
+        const colors = ['#f94144', '#f3722c', '#f8961e', '#f9844a', '#f9c74f', '#90be6d', '#43aa8b', '#4d908e', '#577590', '#277da1'];
+
+        // Get all projects for this API key
+        const getStmt = db.prepare('SELECT id FROM projects WHERE api_key_id = ?');
+        const projects = getStmt.all(req.apiKeyId);
+
+        // Shuffle colors and assign to projects
+        const shuffledColors = [...colors].sort(() => Math.random() - 0.5);
+        const updateStmt = db.prepare('UPDATE projects SET color = ? WHERE id = ?');
+
+        projects.forEach((project, index) => {
+            const color = shuffledColors[index % shuffledColors.length];
+            updateStmt.run(color, project.id);
+        });
+
+        // Get updated projects
+        const getAllStmt = db.prepare('SELECT id, name, target_hours, color, visible FROM projects WHERE api_key_id = ?');
+        const updatedProjects = getAllStmt.all(req.apiKeyId);
+
+        broadcastUpdate(req.apiKey, 'projects_updated', updatedProjects);
+        res.json({ success: true, projects: updatedProjects });
+    } catch (error) {
+        console.error('Error randomizing colors:', error);
         res.status(500).json({ error: error.message });
     }
 });
