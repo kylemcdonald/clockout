@@ -6,12 +6,65 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { createServer } from 'http';
+import { WebSocketServer } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
+const server = createServer(app);
+
+// WebSocket server setup
+const wss = new WebSocketServer({ server });
+const clientsByApiKey = new Map(); // Map<apiKey, Set<WebSocket>>
+
+wss.on('connection', (ws, req) => {
+    // Extract API key from query string
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const apiKey = url.searchParams.get('api_key');
+
+    if (!apiKey || !validateApiKey(apiKey)) {
+        ws.close(1008, 'Invalid API key');
+        return;
+    }
+
+    // Store connection by API key
+    if (!clientsByApiKey.has(apiKey)) {
+        clientsByApiKey.set(apiKey, new Set());
+    }
+    clientsByApiKey.get(apiKey).add(ws);
+
+    ws.apiKey = apiKey;
+
+    ws.on('close', () => {
+        const clients = clientsByApiKey.get(apiKey);
+        if (clients) {
+            clients.delete(ws);
+            if (clients.size === 0) {
+                clientsByApiKey.delete(apiKey);
+            }
+        }
+    });
+
+    ws.on('error', (error) => {
+        console.error('WebSocket error:', error);
+    });
+});
+
+// Broadcast update to all clients with the same API key
+function broadcastUpdate(apiKey, type, data) {
+    const clients = clientsByApiKey.get(apiKey);
+    if (!clients) return;
+
+    const message = JSON.stringify({ type, data });
+    clients.forEach(client => {
+        if (client.readyState === 1) { // WebSocket.OPEN
+            client.send(message);
+        }
+    });
+}
 
 // Enable CORS for all routes
 app.use(cors());
@@ -151,7 +204,9 @@ app.post('/api/projects', requireApiKey, (req, res) => {
         
         const stmt = db.prepare('INSERT INTO projects (api_key_id, name, target_hours, color) VALUES (?, ?, ?, ?)');
         const result = stmt.run(req.apiKeyId, name, parseFloat(target_hours), projectColor);
-        res.json({ id: result.lastInsertRowid, name, target_hours: parseFloat(target_hours), color: projectColor, visible: 1 });
+        const newProject = { id: result.lastInsertRowid, name, target_hours: parseFloat(target_hours), color: projectColor, visible: 1 };
+        broadcastUpdate(req.apiKey, 'project_created', newProject);
+        res.json(newProject);
     } catch (error) {
         if (error.message.includes('UNIQUE constraint')) {
             return res.status(409).json({ error: 'Project with this name already exists' });
@@ -189,6 +244,7 @@ app.put('/api/projects/:id', requireApiKey, (req, res) => {
         // Fetch updated project
         const getStmt = db.prepare('SELECT id, name, target_hours, color, visible FROM projects WHERE id = ?');
         const project = getStmt.get(parseInt(req.params.id));
+        broadcastUpdate(req.apiKey, 'project_updated', project);
         res.json(project);
     } catch (error) {
         if (error.message.includes('UNIQUE constraint')) {
@@ -202,11 +258,13 @@ app.put('/api/projects/:id', requireApiKey, (req, res) => {
 // Delete a project
 app.delete('/api/projects/:id', requireApiKey, (req, res) => {
     try {
+        const projectId = parseInt(req.params.id);
         const stmt = db.prepare('DELETE FROM projects WHERE id = ? AND api_key_id = ?');
-        const result = stmt.run(parseInt(req.params.id), req.apiKeyId);
+        const result = stmt.run(projectId, req.apiKeyId);
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Project not found' });
         }
+        broadcastUpdate(req.apiKey, 'project_deleted', { id: projectId });
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting project:', error);
@@ -333,13 +391,15 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
 
         const newEntryId = startNewEntry(req.apiKeyId, parseInt(project_id), startTime);
 
-        res.json({
+        const newEntry = {
             id: newEntryId,
             project_id: parseInt(project_id),
             start: startTime,
             stop: null,
             name: project.name
-        });
+        };
+        broadcastUpdate(req.apiKey, 'time_entry_started', newEntry);
+        res.json(newEntry);
     } catch (error) {
         console.error('Error starting time entry:', error);
         res.status(500).json({ error: error.message });
@@ -349,11 +409,14 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
 // Stop current time entry
 app.patch('/api/time-entries/:id/stop', requireApiKey, (req, res) => {
     try {
+        const entryId = parseInt(req.params.id);
+        const endTime = new Date().toISOString();
         const stmt = db.prepare('UPDATE time_entries SET end_time = ? WHERE id = ? AND api_key_id = ? AND end_time IS NULL');
-        const result = stmt.run(new Date().toISOString(), parseInt(req.params.id), req.apiKeyId);
+        const result = stmt.run(endTime, entryId, req.apiKeyId);
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Time entry not found or already stopped' });
         }
+        broadcastUpdate(req.apiKey, 'time_entry_stopped', { id: entryId, end_time: endTime });
         res.json({ success: true });
     } catch (error) {
         console.error('Error stopping time entry:', error);
@@ -411,6 +474,8 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
             return res.status(404).json({ error: 'Time entry not found' });
         }
 
+        const entryId = parseInt(req.params.id);
+        broadcastUpdate(req.apiKey, 'time_entry_updated', { id: entryId, start_time: validatedStartTime, end_time: validatedEndTime });
         res.json({ success: true });
     } catch (error) {
         console.error('Error updating time entry:', error);
@@ -421,11 +486,13 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
 // Delete a time entry
 app.delete('/api/time-entries/:id', requireApiKey, (req, res) => {
     try {
+        const entryId = parseInt(req.params.id);
         const stmt = db.prepare('DELETE FROM time_entries WHERE id = ? AND api_key_id = ?');
-        const result = stmt.run(parseInt(req.params.id), req.apiKeyId);
+        const result = stmt.run(entryId, req.apiKeyId);
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Time entry not found' });
         }
+        broadcastUpdate(req.apiKey, 'time_entry_deleted', { id: entryId });
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting time entry:', error);
@@ -493,6 +560,6 @@ app.get('/api', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`);
 });

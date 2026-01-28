@@ -1830,6 +1830,77 @@
             loadTimeEntries();
         });
 
+        // WebSocket connection for real-time updates
+        let ws = null;
+        let wsReconnectTimeout = null;
+
+        function connectWebSocket() {
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) return;
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}?api_key=${apiKey}`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                ws = null;
+                wsReconnectTimeout = setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function handleWebSocketMessage(message) {
+            console.log('WebSocket message:', message.type);
+
+            switch (message.type) {
+                case 'project_created':
+                case 'project_updated':
+                case 'project_deleted':
+                    // Refresh projects list
+                    fetchProjects().then(async () => {
+                        try {
+                            const response = await fetch('/api/projects', { headers: getApiHeaders() });
+                            if (response.ok) {
+                                allProjects = await response.json();
+                            }
+                        } catch (error) {
+                            console.error('Error fetching projects for modal:', error);
+                        }
+                        loadTimeEntries(true);
+                    });
+                    break;
+
+                case 'time_entry_started':
+                case 'time_entry_stopped':
+                case 'time_entry_updated':
+                case 'time_entry_deleted':
+                    // Reload time entries, preserving current page
+                    loadTimeEntries(true);
+                    break;
+            }
+        }
+
+        // Connect WebSocket
+        connectWebSocket();
+
         // Set up interval to update running entries every second
         let runningEntriesInterval = setInterval(updateRunningEntries, 1000);
 

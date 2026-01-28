@@ -572,6 +572,98 @@
             fetchProjects();
         }
 
+        // WebSocket connection for real-time updates
+        let ws = null;
+        let wsReconnectTimeout = null;
+
+        function connectWebSocket() {
+            if (!apiToken) return;
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}?api_key=${apiToken}`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                ws = null;
+                // Reconnect after 2 seconds
+                wsReconnectTimeout = setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function handleWebSocketMessage(message) {
+            console.log('WebSocket message:', message.type);
+
+            switch (message.type) {
+                case 'project_created':
+                case 'project_updated':
+                case 'project_deleted':
+                    // Refresh projects list
+                    fetchProjects();
+                    break;
+
+                case 'time_entry_started':
+                    // Update current task state
+                    currentTaskId = message.data.id;
+                    currentTaskName = message.data.name;
+                    currentTaskStartTime = message.data.start ? new Date(message.data.start) : new Date();
+                    if (!(message.data.name in cachedProjectTotals)) {
+                        cachedProjectTotals[message.data.name] = 0;
+                    }
+                    currentTaskElapsedAtLastUpdateHours = totalsLastUpdatedAt && currentTaskStartTime
+                        ? Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000)
+                        : 0;
+                    renderTotalsFromCache();
+                    updateButtonStyles(message.data.name);
+                    updateDocumentTitle();
+                    break;
+
+                case 'time_entry_stopped':
+                    // Clear current task if this was the running one
+                    if (currentTaskId === message.data.id) {
+                        currentTaskId = null;
+                        currentTaskName = null;
+                        currentTaskStartTime = null;
+                        currentTaskElapsedAtLastUpdateHours = 0;
+                        updateButtonStyles(null);
+                        updateDocumentTitle();
+                    }
+                    // Refresh totals
+                    updateTotals();
+                    break;
+
+                case 'time_entry_updated':
+                case 'time_entry_deleted':
+                    // Refresh totals and current task
+                    updateTotals();
+                    getCurrentTask();
+                    break;
+            }
+        }
+
+        // Connect WebSocket if we have an API token
+        if (apiToken) {
+            connectWebSocket();
+        }
+
         // Handle Escape key to navigate to history page
         // Use capture phase and window to ensure it works regardless of focus
         window.addEventListener('keydown', (event) => {

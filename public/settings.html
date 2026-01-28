@@ -680,6 +680,60 @@
                 window.location.href = '/';
             }
         }, true);
+
+        // WebSocket connection for real-time updates
+        let ws = null;
+        let wsReconnectTimeout = null;
+
+        function connectWebSocket() {
+            if (!apiToken) return;
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}?api_key=${apiToken}`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                ws = null;
+                wsReconnectTimeout = setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function handleWebSocketMessage(message) {
+            console.log('WebSocket message:', message.type);
+
+            switch (message.type) {
+                case 'project_created':
+                case 'project_updated':
+                case 'project_deleted':
+                    // Refresh projects list
+                    loadProjectsList();
+                    break;
+            }
+        }
+
+        // Connect WebSocket
+        if (apiToken) {
+            connectWebSocket();
+        }
     </script>
 </body>
 
