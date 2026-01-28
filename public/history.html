@@ -562,25 +562,20 @@
             today.setHours(0, 0, 0, 0);
             const todayKey = formatDate(today.toISOString());
 
-            const mostRecentWithData = uniqueDatesWithEntries[0];
-            if (!mostRecentWithData) return [todayKey];
+            if (uniqueDatesWithEntries.length === 0) return [todayKey];
+
+            // Find the oldest entry date (last in the sorted array)
+            const oldestWithData = uniqueDatesWithEntries[uniqueDatesWithEntries.length - 1];
 
             const allDates = [];
             let currentDate = new Date(today);
-            const endDate = new Date(mostRecentWithData + 'T00:00:00');
+            const endDate = new Date(oldestWithData + 'T00:00:00');
 
-            // Generate dates from today back to most recent entry date
+            // Generate ALL dates from today back to the oldest entry date
             while (currentDate >= endDate) {
                 allDates.push(formatDate(currentDate.toISOString()));
                 currentDate.setDate(currentDate.getDate() - 1);
             }
-
-            // Add older dates with entries (that are before mostRecentWithData)
-            uniqueDatesWithEntries.forEach(date => {
-                if (!allDates.includes(date)) {
-                    allDates.push(date);
-                }
-            });
 
             return allDates;
         }
