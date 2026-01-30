@@ -453,6 +453,14 @@
         setInterval(updateDocumentTitle, 1000);
         updateDocumentTitle();
 
+        // Refresh data when tab becomes visible again (e.g., laptop wakes up)
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                getCurrentTask();
+                updateTotals();
+            }
+        });
+
         async function startTask(projectId, projectName) {
             if (!apiToken) {
                 alert('Please enter an API key in settings first.');

@@ -478,6 +478,9 @@
         let dragEndSlot = null; // Ending 30-min slot index
         let dragDateKey = null; // Date being dragged on
         let pendingTimeRange = null; // Time range awaiting project selection
+        let currentTaskName = null; // For title ticker
+        let currentTaskStartTime = null; // For title ticker
+        const DEFAULT_TITLE = document.title;
 
         function getCookie(name) {
             const cname = name + "=";
@@ -530,6 +533,66 @@
             } catch (error) {
                 console.error('Error fetching projects:', error);
             }
+        }
+
+        async function getCurrentTask() {
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                currentTaskName = null;
+                currentTaskStartTime = null;
+                updateDocumentTitle();
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/time-entries/current', {
+                    headers: getApiHeaders()
+                });
+
+                if (!response.ok) {
+                    currentTaskName = null;
+                    currentTaskStartTime = null;
+                    updateDocumentTitle();
+                    return;
+                }
+
+                const data = await response.json();
+                if (data && data.id) {
+                    currentTaskName = data.name;
+                    currentTaskStartTime = data.start ? new Date(data.start) : null;
+                } else {
+                    currentTaskName = null;
+                    currentTaskStartTime = null;
+                }
+                updateDocumentTitle();
+            } catch (error) {
+                console.error('Error getting current task:', error);
+                currentTaskName = null;
+                currentTaskStartTime = null;
+                updateDocumentTitle();
+            }
+        }
+
+        function formatElapsedDuration(durationSeconds) {
+            const totalSeconds = Math.max(0, Math.floor(durationSeconds));
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+            const totalMinutes = Math.floor(totalSeconds / 60);
+            return `${totalMinutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function updateDocumentTitle() {
+            if (currentTaskName && currentTaskStartTime instanceof Date) {
+                const elapsedSeconds = (Date.now() - currentTaskStartTime.getTime()) / 1000;
+                const formattedDuration = formatElapsedDuration(elapsedSeconds);
+                document.title = `${formattedDuration} ${currentTaskName}`;
+                return;
+            }
+            document.title = DEFAULT_TITLE;
         }
 
         function formatDuration(seconds) {
@@ -1860,6 +1923,7 @@
             } catch (error) {
                 console.error('Error fetching projects for modal:', error);
             }
+            getCurrentTask();
             loadTimeEntries();
         });
 
@@ -1923,9 +1987,15 @@
 
                 case 'time_entry_started':
                 case 'time_entry_stopped':
+                    // Update current task for title ticker and reload entries
+                    getCurrentTask();
+                    loadTimeEntries(true);
+                    break;
+
                 case 'time_entry_updated':
                 case 'time_entry_deleted':
                     // Reload time entries, preserving current page
+                    getCurrentTask();
                     loadTimeEntries(true);
                     break;
             }
@@ -1936,6 +2006,18 @@
 
         // Set up interval to update running entries every second
         let runningEntriesInterval = setInterval(updateRunningEntries, 1000);
+
+        // Set up interval to update document title every second
+        setInterval(updateDocumentTitle, 1000);
+        updateDocumentTitle();
+
+        // Refresh data when tab becomes visible again (e.g., laptop wakes up)
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                getCurrentTask();
+                loadTimeEntries(true);
+            }
+        });
 
         // Navigate to main page on Escape key (or close modal if open)
         // Use capture phase and window to ensure it works regardless of focus
