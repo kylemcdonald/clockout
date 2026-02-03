@@ -457,11 +457,20 @@ app.patch('/api/time-entries/:id/stop', requireApiKey, (req, res) => {
 // Update a time entry (start_time and/or end_time)
 app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
     try {
-        const { start_time, end_time } = req.body;
+        const { start_time, end_time, project_id } = req.body;
 
         // Validate input
-        if (!start_time && end_time === undefined) {
-            return res.status(400).json({ error: 'Either start_time or end_time must be provided' });
+        if (!start_time && end_time === undefined && !project_id) {
+            return res.status(400).json({ error: 'Either start_time, end_time, or project_id must be provided' });
+        }
+
+        // Validate project_id if provided
+        if (project_id) {
+            const projectStmt = db.prepare('SELECT id FROM projects WHERE id = ? AND api_key_id = ?');
+            const project = projectStmt.get(parseInt(project_id), req.apiKeyId);
+            if (!project) {
+                return res.status(404).json({ error: 'Project not found' });
+            }
         }
 
         // Validate date formats if provided
@@ -492,6 +501,10 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
         if (validatedEndTime !== undefined) {
             updates.push('end_time = ?');
             params.push(validatedEndTime);
+        }
+        if (project_id) {
+            updates.push('project_id = ?');
+            params.push(parseInt(project_id));
         }
 
         // Add WHERE conditions

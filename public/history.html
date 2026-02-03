@@ -119,6 +119,7 @@
             background-color: rgba(255, 255, 255, 0.15);
         }
         .edit-button,
+        .split-button,
         .delete-button {
             padding: 0.5em;
             background-color: rgba(255, 255, 255, 0.1);
@@ -136,10 +137,21 @@
         .edit-button:hover {
             background-color: rgba(59, 130, 246, 0.8);
         }
+        .split-button:hover {
+            background-color: rgba(168, 85, 247, 0.8);
+        }
+        .split-button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .split-button:disabled:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
         .delete-button:hover {
             background-color: rgba(220, 53, 69, 0.8);
         }
         .edit-button svg,
+        .split-button svg,
         .delete-button svg {
             width: 16px;
             height: 16px;
@@ -478,6 +490,7 @@
         let dragEndSlot = null; // Ending 30-min slot index
         let dragDateKey = null; // Date being dragged on
         let pendingTimeRange = null; // Time range awaiting project selection
+        let pendingEntryIdForProjectChange = null; // Entry ID when changing project
         let currentTaskName = null; // For title ticker
         let currentTaskStartTime = null; // For title ticker
         const DEFAULT_TITLE = document.title;
@@ -1141,16 +1154,23 @@
             const runningAttr = isRunning ? `data-running="true" data-start-time="${entry.start}"` : '';
             const startTime = formatTime(entry.start);
 
+            const splitDisabled = isRunning ? 'disabled' : '';
+
             return `
                 <div class="time-entry" data-entry-id="${entry.id}" ${runningAttr} style="--visualization-color: ${projectColor}; --visualization-width: ${widthPercentage}%;">
                     <div class="time-entry-header">
-                        <span class="project-name project-name-colored" style="${projectNameStyle}">${projectName}</span>
+                        <span class="project-name project-name-colored" style="${projectNameStyle}; cursor: pointer;" onclick="changeEntryProject(${entry.id})">${projectName}</span>
                         <div>
                             <span class="duration">${duration}</span>
                             <button class="edit-button" onclick="editTimeEntry(${entry.id})" title="Edit">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M21.731 2.269a2.625 2.625 0 0 0-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 0 0 0-3.712ZM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 0 0-1.32 2.214l-.8 2.685a.75.75 0 0 0 .933.933l2.685-.8a5.25 5.25 0 0 0 2.214-1.32l8.4-8.4Z" />
                                     <path d="M5.25 5.25a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3V13.5a.75.75 0 0 0-1.5 0v5.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5V8.25a1.5 1.5 0 0 1 1.5-1.5h5.25a.75.75 0 0 0 0-1.5H5.25Z" />
+                                </svg>
+                            </button>
+                            <button class="split-button" onclick="splitTimeEntry(${entry.id})" title="Split" ${splitDisabled}>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M11.47 2.47a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1-1.06 1.06l-2.47-2.47V12h4.5a.75.75 0 0 1 0 1.5h-4.5v6.19l2.47-2.47a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0l-3.75-3.75a.75.75 0 1 1 1.06-1.06l2.47 2.47V13.5h-4.5a.75.75 0 0 1 0-1.5h4.5V4.81L8.78 7.28a.75.75 0 0 1-1.06-1.06l3.75-3.75Z" clip-rule="evenodd" />
                                 </svg>
                             </button>
                             <button class="delete-button" onclick="deleteTimeEntry(${entry.id})" title="Delete">
@@ -1789,6 +1809,7 @@
             const modal = document.getElementById('projectModal');
             modal.classList.remove('visible');
             pendingTimeRange = null;
+            pendingEntryIdForProjectChange = null;
 
             // Clean up any selection visuals on all minimaps
             const allMinimaps = document.querySelectorAll('.day-minimap');
@@ -1884,6 +1905,34 @@
         }
 
         async function selectProject(projectId, projectName, projectColor) {
+            // Handle project change for existing entry
+            if (pendingEntryIdForProjectChange) {
+                try {
+                    const apiKey = getCookie('apiToken');
+                    const response = await fetch(`/api/time-entries/${pendingEntryIdForProjectChange}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                            'X-API-Key': apiKey
+                        },
+                        body: JSON.stringify({ project_id: projectId })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to update project');
+                    }
+
+                    hideProjectModal();
+                    await loadTimeEntries(true);
+                } catch (error) {
+                    console.error('Error changing project:', error);
+                    alert(`Error changing project: ${error.message}`);
+                    hideProjectModal();
+                }
+                return;
+            }
+
             if (!pendingTimeRange) {
                 hideProjectModal();
                 return;
@@ -1909,6 +1958,63 @@
                 console.error('Error creating time entry:', error);
                 alert(`Error creating time entry: ${error.message}`);
                 hideProjectModal();
+            }
+        }
+
+        function changeEntryProject(entryId) {
+            pendingEntryIdForProjectChange = entryId;
+            pendingTimeRange = null;
+            showProjectModal();
+        }
+
+        async function splitTimeEntry(entryId) {
+            const entry = allEntries.find(e => e.id === entryId);
+            if (!entry || !entry.stop || entry.duration < 0) {
+                alert('Cannot split a running entry.');
+                return;
+            }
+
+            const startTime = new Date(entry.start);
+            const endTime = new Date(entry.stop);
+            const midTime = new Date((startTime.getTime() + endTime.getTime()) / 2);
+
+            const apiKey = getCookie('apiToken');
+            if (!apiKey) {
+                alert('No API key found.');
+                return;
+            }
+
+            try {
+                // Update original entry to end at midpoint
+                const updateResponse = await fetch(`/api/time-entries/${entryId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({
+                        end_time: midTime.toISOString()
+                    })
+                });
+
+                if (!updateResponse.ok) {
+                    throw new Error('Failed to update original entry');
+                }
+
+                // Create new entry from midpoint to end with same project
+                // First get the project_id from the entry
+                const projectName = entry.name;
+                const project = allProjects.find(p => p.name === projectName);
+                if (!project) {
+                    throw new Error('Project not found');
+                }
+
+                await createTimeEntry(project.id, midTime.toISOString(), endTime.toISOString());
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error splitting entry:', error);
+                alert(`Error splitting entry: ${error.message}`);
             }
         }
 
