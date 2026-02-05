@@ -1785,6 +1785,28 @@
             const modal = document.getElementById('projectModal');
             const grid = document.getElementById('projectModalGrid');
 
+            // Set grid layout dynamically based on orientation and project count (matching main page)
+            const isPortrait = window.innerHeight > window.innerWidth;
+            const projectCount = allProjects.length;
+
+            if (isPortrait) {
+                if (projectCount > 12) {
+                    grid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+                    grid.style.gridTemplateRows = 'repeat(5, 1fr)';
+                } else {
+                    grid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+                    grid.style.gridTemplateRows = 'repeat(4, 1fr)';
+                }
+            } else {
+                if (projectCount > 12) {
+                    grid.style.gridTemplateColumns = 'repeat(5, 1fr)';
+                    grid.style.gridTemplateRows = 'repeat(3, 1fr)';
+                } else {
+                    grid.style.gridTemplateColumns = 'repeat(4, 1fr)';
+                    grid.style.gridTemplateRows = 'repeat(3, 1fr)';
+                }
+            }
+
             // Build project grid matching main page style
             let gridHtml = '';
             allProjects.forEach(project => {
