@@ -206,6 +206,7 @@
 
         /* ============ HISTORY PANE STYLES ============ */
         .history-pane {
+            position: relative;
             background-color: black;
         }
         .history-container {
@@ -632,6 +633,11 @@
         <div class="pane-wrapper">
         <!-- HISTORY PANE (Left) -->
         <div class="pane history-pane" id="historyPane">
+            <div class="time-adjust-nav">
+                <button onclick="addTenMinutes()">10m</button>
+                <button onclick="addThirtyMinutes()">30m</button>
+                <button onclick="addOneHour()">1h</button>
+            </div>
             <div class="history-container">
                 <div class="history-header">
                     <h1>History</h1>
