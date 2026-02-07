@@ -37,6 +37,7 @@
             -webkit-overflow-scrolling: touch;
             scrollbar-width: none;
             -ms-overflow-style: none;
+            touch-action: pan-x pan-y;
         }
         .pane-container::-webkit-scrollbar {
             display: none;
@@ -49,6 +50,8 @@
             scroll-snap-stop: always;
             overflow-y: auto;
             overflow-x: hidden;
+            overscroll-behavior-x: none;
+            overscroll-behavior-y: contain;
         }
 
         /* Page indicator dots */
@@ -721,34 +724,47 @@
         const paneContainer = document.getElementById('paneContainer');
         let currentPane = 1; // Start on Track (center)
 
-        function scrollToPane(index) {
+        function getCurrentPaneFromScroll() {
             const paneWidth = window.innerWidth;
+            return Math.round(paneContainer.scrollLeft / paneWidth);
+        }
+
+        function scrollToPane(index, instant = false) {
+            const paneWidth = window.innerWidth;
+            currentPane = index;
             paneContainer.scrollTo({
                 left: index * paneWidth,
-                behavior: 'smooth'
+                behavior: instant ? 'instant' : 'smooth'
             });
+            updatePageIndicator();
         }
 
         function updatePageIndicator() {
-            const scrollLeft = paneContainer.scrollLeft;
-            const paneWidth = window.innerWidth;
-            const newPane = Math.round(scrollLeft / paneWidth);
-
-            if (newPane !== currentPane) {
-                currentPane = newPane;
-            }
-
             document.querySelectorAll('.page-dot').forEach((dot, i) => {
                 dot.classList.toggle('active', i === currentPane);
             });
         }
 
-        paneContainer.addEventListener('scroll', updatePageIndicator);
-
-        // Scroll to center pane (Track) on load
-        window.addEventListener('load', () => {
-            scrollToPane(1);
+        paneContainer.addEventListener('scroll', () => {
+            const newPane = getCurrentPaneFromScroll();
+            if (newPane !== currentPane) {
+                currentPane = newPane;
+                updatePageIndicator();
+            }
         });
+
+        paneContainer.addEventListener('scrollend', () => {
+            currentPane = getCurrentPaneFromScroll();
+            updatePageIndicator();
+        });
+
+        // Scroll to center pane (Track) on load - use instant to avoid animation
+        window.addEventListener('load', () => {
+            scrollToPane(1, true);
+        });
+
+        // Also set initial position immediately (backup for load event)
+        setTimeout(() => scrollToPane(1, true), 0);
 
         // ============ UTILITY FUNCTIONS ============
         function getCookie(name) {
@@ -2133,26 +2149,44 @@
 
         // ============ KEYBOARD NAVIGATION ============
         window.addEventListener('keydown', function(event) {
+            // Don't handle keys when typing in inputs
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+                return;
+            }
+
             // Modal handling
             const modal = document.getElementById('projectModal');
             if (modal && modal.classList.contains('visible')) {
                 if (event.key === 'Escape') {
                     event.preventDefault();
+                    event.stopPropagation();
                     hideProjectModal();
                 }
                 return;
             }
 
-            // Arrow key pane navigation
-            if (event.key === 'ArrowLeft' && currentPane > 0) {
+            // Escape key toggles between Track (1) and History (0)
+            if (event.key === 'Escape') {
                 event.preventDefault();
-                scrollToPane(currentPane - 1);
-            } else if (event.key === 'ArrowRight' && currentPane < 2) {
-                event.preventDefault();
-                scrollToPane(currentPane + 1);
+                event.stopPropagation();
+                if (currentPane === 1) {
+                    scrollToPane(0); // Track -> History
+                } else {
+                    scrollToPane(1); // History/Settings -> Track
+                }
+                return;
             }
 
-            // Week navigation in history pane
+            // Arrow key pane navigation
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                if (currentPane > 0) scrollToPane(currentPane - 1);
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                if (currentPane < 2) scrollToPane(currentPane + 1);
+            }
+
+            // Week navigation in history pane (up/down arrows)
             if (currentPane === 0) {
                 const totalPages = Math.ceil(allUniqueDates.length / 7);
                 if (event.key === 'ArrowUp' && currentPage > 1) {
@@ -2163,7 +2197,7 @@
                     goToPage(currentPage + 1);
                 }
             }
-        });
+        }, true);
 
         // ============ INITIALIZATION ============
         document.getElementById('apiTokenInput').value = apiToken;
