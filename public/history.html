@@ -2163,6 +2163,29 @@
                 }
             }
         }, true);
+
+        // Navigate between weeks with left/right arrow keys
+        window.addEventListener('keydown', function(event) {
+            // Don't trigger if a modal is open or user is typing in an input
+            const modal = document.getElementById('projectModal');
+            if (modal && modal.classList.contains('visible')) return;
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+
+            const daysPerPage = 7;
+            const totalPages = Math.ceil(allUniqueDates.length / daysPerPage);
+
+            if (event.key === 'ArrowLeft') {
+                event.preventDefault();
+                if (currentPage < totalPages) {
+                    goToPage(currentPage + 1);
+                }
+            } else if (event.key === 'ArrowRight') {
+                event.preventDefault();
+                if (currentPage > 1) {
+                    goToPage(currentPage - 1);
+                }
+            }
+        });
     </script>
 </body>
 </html>
