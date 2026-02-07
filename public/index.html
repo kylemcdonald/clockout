@@ -1,61 +1,773 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Clock-Out</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
     <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
     <link rel="icon" href="icon.png" sizes="any">
-</head>
+    <style>
+        * {
+            font-family: 'Inter', sans-serif;
+            box-sizing: border-box;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            background-color: black;
+            color: white;
+        }
 
+        /* Swipe container */
+        .pane-container {
+            display: flex;
+            width: 300vw;
+            height: 100%;
+            overflow-x: scroll;
+            overflow-y: hidden;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .pane-container::-webkit-scrollbar {
+            display: none;
+        }
+        .pane {
+            flex: 0 0 100vw;
+            width: 100vw;
+            height: 100%;
+            scroll-snap-align: start;
+            scroll-snap-stop: always;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        /* Page indicator dots */
+        .page-indicator {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 8px;
+            z-index: 1002;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 20px;
+        }
+        .page-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            cursor: pointer;
+            transition: background 0.2s, transform 0.2s;
+        }
+        .page-dot.active {
+            background: rgba(255, 255, 255, 0.9);
+            transform: scale(1.2);
+        }
+        .page-dot:hover {
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        /* ============ TRACK PANE STYLES ============ */
+        .track-pane {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .time-adjust-nav {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1001;
+            display: flex;
+            gap: 10px;
+        }
+        .time-adjust-nav button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 12px;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+            cursor: pointer;
+            font-size: 0.72em;
+        }
+        .time-adjust-nav button:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        .time-adjust-nav button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .untracked-indicator {
+            position: absolute;
+            bottom: 60px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: white;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: none;
+        }
+        .untracked-indicator span {
+            font-family: 'Courier New', monospace;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            width: 90vw;
+            height: 90vh;
+        }
+        @media (orientation: portrait) {
+            .grid {
+                grid-template-columns: repeat(3, 1fr);
+                grid-template-rows: repeat(4, 1fr);
+            }
+        }
+        .container {
+            cursor: pointer;
+            font-size: calc(10px + 2vmin);
+            margin: 2vmin;
+            background-color: rgb(40, 40, 40);
+            border: none;
+            border-radius: 1em;
+            position: relative;
+            display: flex;
+            align-items: center;
+            text-align: center;
+            justify-content: center;
+        }
+        .fill {
+            border: none;
+            border-radius: 1em;
+            width: 100%;
+            height: 50%;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            transition: height 1s ease-in-out;
+        }
+        .label {
+            position: relative;
+            display: flex;
+            z-index: 1;
+            color: white;
+            max-width: 90%;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            word-break: break-word;
+            hyphens: auto;
+        }
+        .offset {
+            position: absolute;
+            font-size: 80%;
+            top: 1em;
+            right: 1em;
+        }
+        .day-indicator {
+            position: absolute;
+            bottom: 0.5em;
+            font-size: 50%;
+            opacity: 0.6;
+            letter-spacing: 0.1em;
+            z-index: 1;
+        }
+
+        /* ============ HISTORY PANE STYLES ============ */
+        .history-pane {
+            background-color: black;
+        }
+        .history-container {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            padding-bottom: 80px;
+            color: white;
+        }
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .history-header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: normal;
+        }
+        .time-entry {
+            background-color: rgba(255, 255, 255, 0.05);
+            padding: 16px;
+            margin-bottom: 12px;
+            border-radius: 4px;
+            position: relative;
+        }
+        .time-entry::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: var(--visualization-width, 0%);
+            height: 3px;
+            background-color: var(--visualization-color, #D15540);
+            border-radius: 4px 4px 0 0;
+        }
+        .time-entry-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .project-name {
+            font-weight: normal;
+            font-size: 1em;
+        }
+        .project-name-colored {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 3px;
+        }
+        .duration {
+            font-size: 1em;
+            margin-right: 12px;
+        }
+        .time-range {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.9em;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+        .error {
+            background-color: rgba(255, 0, 0, 0.15);
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .extend-button, .edit-button, .split-button, .delete-button {
+            padding: 0.5em;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 32px;
+            min-height: 32px;
+        }
+        .extend-button {
+            padding: 6px 12px;
+            font-size: 0.9em;
+        }
+        .edit-button:hover { background-color: rgba(59, 130, 246, 0.8); }
+        .split-button:hover { background-color: rgba(168, 85, 247, 0.8); }
+        .split-button:disabled { opacity: 0.3; cursor: not-allowed; }
+        .delete-button:hover { background-color: rgba(220, 53, 69, 0.8); }
+        .edit-button svg, .split-button svg, .delete-button svg {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
+        }
+        .save-button, .cancel-button {
+            padding: 6px 12px;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-left: 6px;
+        }
+        .save-button { background-color: rgba(255, 255, 255, 0.15); }
+        .save-button:hover { background-color: rgba(255, 255, 255, 0.2); }
+        .cancel-button { background-color: rgba(255, 255, 255, 0.05); color: rgba(255, 255, 255, 0.7); }
+        .cancel-button:hover { background-color: rgba(255, 255, 255, 0.1); }
+        .edit-mode .time-range { display: none; }
+        .edit-mode .edit-form { display: block; margin-top: 12px; }
+        .edit-form { display: none; }
+        .edit-input {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 3px;
+            padding: 6px 10px;
+            color: white;
+            font-size: 1em;
+            margin-right: 8px;
+            width: 200px;
+        }
+        .edit-input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.3);
+            background-color: rgba(255, 255, 255, 0.12);
+        }
+        .date-header {
+            font-size: 1.2em;
+            font-weight: normal;
+            margin-top: 16px;
+            margin-bottom: 8px;
+        }
+        .date-header:first-child { margin-top: 0; }
+        .day-minimap {
+            height: 1.2em;
+            width: 100%;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+            margin-bottom: 2.5em;
+            position: relative;
+            overflow: visible;
+            cursor: pointer;
+        }
+        .minimap-segment {
+            height: 100%;
+            position: absolute;
+            border-left: 2px solid black;
+            top: 0;
+            overflow: hidden;
+        }
+        .minimap-segment.untracked { background-color: rgba(102, 102, 102, 0.3); }
+        .day-minimap-empty { border: 1px solid rgba(255, 255, 255, 0.3); background-color: transparent; }
+        .day-entries { display: none; }
+        .day-entries.expanded { display: block; }
+        .hover-preview {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background-color: rgba(100, 150, 255, 0.3);
+            pointer-events: none;
+            border-radius: 2px;
+        }
+        .drag-selection {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background-color: rgba(100, 200, 100, 0.5);
+            pointer-events: none;
+            border-radius: 2px;
+        }
+        .time-indicator-start, .time-indicator-end {
+            position: absolute;
+            top: 100%;
+            margin-top: 4px;
+            background-color: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 100;
+        }
+        .time-indicator-start { transform: translateX(-100%); }
+        .time-indicator-end { transform: translateX(0); }
+        .project-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: black;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .project-modal.visible { display: flex; }
+        .modal-close-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 2em;
+            cursor: pointer;
+            padding: 10px;
+            line-height: 1;
+            z-index: 2001;
+        }
+        .project-modal-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            width: 90vw;
+            height: 90vh;
+        }
+        @media (orientation: portrait) {
+            .project-modal-grid {
+                grid-template-columns: repeat(3, 1fr);
+                grid-template-rows: repeat(4, 1fr);
+            }
+        }
+        .project-modal-item {
+            cursor: pointer;
+            font-size: calc(10px + 2vmin);
+            margin: 2vmin;
+            background-color: rgb(40, 40, 40);
+            border: none;
+            border-radius: 1em;
+            position: relative;
+            display: flex;
+            align-items: center;
+            text-align: center;
+            justify-content: center;
+            overflow: hidden;
+            word-break: break-word;
+        }
+        .project-modal-item:hover { opacity: 0.8; }
+        .project-modal-fill {
+            border-radius: 1em;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+        }
+        .project-modal-label {
+            position: relative;
+            z-index: 1;
+            color: white;
+            max-width: 90%;
+            text-align: center;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            margin-top: 30px;
+            padding: 20px 0;
+        }
+        .pagination-button {
+            padding: 8px 16px;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .pagination-button:hover:not(:disabled) { background-color: rgba(255, 255, 255, 0.15); }
+        .pagination-button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .pagination-info { color: rgba(255, 255, 255, 0.7); font-size: 0.9em; }
+
+        /* ============ SETTINGS PANE STYLES ============ */
+        .settings-pane {
+            background-color: black;
+        }
+        .settings-container {
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            padding-bottom: 80px;
+            color: white;
+        }
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .settings-header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: normal;
+        }
+        .settings-section {
+            margin-bottom: 2em;
+        }
+        .settings-section label {
+            display: block;
+            margin-bottom: 0.75em;
+            font-weight: bold;
+        }
+        .settings-container input {
+            display: block;
+            margin: 0.75em 0;
+            padding: 0.875em 1em;
+            width: calc(100% - 2em);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 6px;
+            font-size: 1em;
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        .settings-container input::placeholder { color: rgba(255, 255, 255, 0.5); }
+        .settings-container button {
+            padding: 0.875em 1.25em;
+            margin: 0.75em 0;
+            font-size: 1em;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        .settings-container button:hover { background-color: rgba(255, 255, 255, 0.3); }
+        .settings-container h3 {
+            margin-top: 2em;
+            margin-bottom: 1em;
+            font-size: 1.2em;
+            font-weight: normal;
+        }
+        .add-project-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75em;
+            margin-top: 1.5em;
+        }
+        .project-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 1.25em 1.5em;
+            margin: 0.875em 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            flex-wrap: wrap;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .project-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            gap: 1em;
+        }
+        .settings-project-name-colored {
+            display: inline-block;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .project-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }
+        .settings-delete-btn, .settings-edit-btn, .visibility-btn {
+            padding: 0.625em;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            min-height: 40px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+        }
+        .settings-delete-btn { background-color: rgba(220, 53, 69, 0.8); }
+        .settings-delete-btn:hover { background-color: rgba(200, 35, 51, 0.9); }
+        .settings-edit-btn { background-color: rgba(59, 130, 246, 0.8); }
+        .settings-edit-btn:hover { background-color: rgba(37, 99, 235, 0.9); }
+        .visibility-btn { background-color: rgba(107, 114, 128, 0.8); }
+        .visibility-btn:hover { background-color: rgba(75, 85, 99, 0.9); }
+        .visibility-btn.invisible { background-color: rgba(156, 163, 175, 0.6); }
+        .settings-delete-btn svg, .settings-edit-btn svg, .visibility-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+        .settings-edit-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75em;
+            margin-top: 1em;
+            padding: 1.25em;
+            background-color: rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .settings-edit-form-buttons {
+            display: flex;
+            gap: 0.75em;
+        }
+        .settings-edit-form-buttons button { flex: 1; }
+        .settings-save-btn { background-color: rgba(34, 197, 94, 0.8); }
+        .settings-save-btn:hover { background-color: rgba(22, 163, 74, 0.9); }
+        .settings-cancel-btn { background-color: rgba(107, 114, 128, 0.8); }
+        .settings-cancel-btn:hover { background-color: rgba(75, 85, 99, 0.9); }
+    </style>
+</head>
 <body>
-    <div class="time-adjust-nav">
-        <button id="addTenButton" onclick="addTenMinutes()">10m</button>
-        <button id="addThirtyButton" onclick="addThirtyMinutes()">30m</button>
-        <button id="addHourButton" onclick="addOneHour()">1h</button>
+    <div class="pane-container" id="paneContainer">
+        <!-- HISTORY PANE (Left) -->
+        <div class="pane history-pane" id="historyPane">
+            <div class="history-container">
+                <div class="history-header">
+                    <h1>History</h1>
+                </div>
+                <div id="errorMessage" style="display: none;"></div>
+                <div id="loadingMessage" class="loading">Loading time entries...</div>
+                <div id="timeEntriesList"></div>
+                <div id="pagination" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- TRACK PANE (Center - Default) -->
+        <div class="pane track-pane" id="trackPane">
+            <div class="time-adjust-nav">
+                <button id="addTenButton" onclick="addTenMinutes()">10m</button>
+                <button id="addThirtyButton" onclick="addThirtyMinutes()">30m</button>
+                <button id="addHourButton" onclick="addOneHour()">1h</button>
+            </div>
+            <div id="untrackedIndicator" class="untracked-indicator">
+                <span id="untrackedText">--:--</span>
+            </div>
+            <div class="grid" id="taskGrid"></div>
+        </div>
+
+        <!-- SETTINGS PANE (Right) -->
+        <div class="pane settings-pane" id="settingsPane">
+            <div class="settings-container">
+                <div class="settings-header">
+                    <h1>Settings</h1>
+                </div>
+                <div class="settings-section">
+                    <label>API Key:</label>
+                    <input type="password" id="apiTokenInput" placeholder="Enter your API key" onclick="this.type='text'" oninput="document.getElementById('saveApiKeyBtn').style.display='inline-block'">
+                    <button id="saveApiKeyBtn" onclick="saveApiKey()" style="display: none;">Save API Key</button>
+                </div>
+                <div class="settings-section">
+                    <h3>Projects</h3>
+                    <button onclick="randomizeColors()" style="margin-bottom: 1em;">Randomize Colors</button>
+                    <div id="projectsList"></div>
+                    <div class="add-project-form">
+                        <input type="text" id="newProjectName" placeholder="Project name">
+                        <input type="number" id="newProjectHours" placeholder="Target hours" step="0.1" min="0">
+                        <button onclick="addProject()">Add Project</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="page-nav">
-        <a href="/" title="Track">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;">
-                <path fill-rule="evenodd" d="M3 6a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3V6ZM3 15.75a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-2.25Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3v-2.25Z" clip-rule="evenodd"/>
-            </svg>
-        </a>
-        <a href="/history" title="History">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;">
-                <path fill-rule="evenodd" d="M6.75 2.25A.75.75 0 0 1 7.5 3v1.5h9V3A.75.75 0 0 1 18 3v1.5h.75a3 3 0 0 1 3 3v11.25a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3H6V3a.75.75 0 0 1 .75-.75Zm13.5 9a1.5 1.5 0 0 0-1.5-1.5H5.25a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5v-7.5Z" clip-rule="evenodd"/>
-            </svg>
-        </a>
-        <a href="/settings" title="Settings">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;">
-                <path fill-rule="evenodd" d="M12 6.75a5.25 5.25 0 0 1 6.775-5.025.75.75 0 0 1 .313 1.248l-3.32 3.319c.063.475.276.934.641 1.299.365.365.824.578 1.3.64l3.318-3.319a.75.75 0 0 1 1.248.313 5.25 5.25 0 0 1-5.472 6.756c-1.018-.086-1.87.1-2.309.634L7.344 21.3A3.298 3.298 0 1 1 2.7 16.657l8.684-7.151c.533-.44.72-1.291.634-2.309A5.342 5.342 0 0 1 12 6.75ZM4.117 19.125a.75.75 0 0 1 .75-.75h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1-.75-.75v-.008Z" clip-rule="evenodd"/>
-            </svg>
-        </a>
+
+    <!-- Page indicator dots -->
+    <div class="page-indicator">
+        <div class="page-dot" data-pane="0" onclick="scrollToPane(0)"></div>
+        <div class="page-dot active" data-pane="1" onclick="scrollToPane(1)"></div>
+        <div class="page-dot" data-pane="2" onclick="scrollToPane(2)"></div>
     </div>
-    <div id="untrackedIndicator" class="untracked-indicator">
-        <span id="untrackedText">--:--</span>
+
+    <!-- Project selection modal for history -->
+    <div id="projectModal" class="project-modal">
+        <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
+        <div id="projectModalGrid" class="project-modal-grid"></div>
     </div>
-    <div class="grid" id="taskGrid"></div>
+
     <script>
+        // ============ SHARED STATE ============
+        let apiToken = getCookie('apiToken') || '';
         let projects = [];
+        let projectColors = {};
         let currentTaskId = null;
         let currentTaskStartTime = null;
         let currentTaskName = null;
         let cachedProjectTotals = {};
-        let cachedProjectDays = {}; // Maps project name to array of 7 booleans (index 0 = 7 days ago, index 6 = today)
+        let cachedProjectDays = {};
         let cachedTotalHours = 0;
         let totalsLastUpdatedAt = null;
         let currentTaskElapsedAtLastUpdateHours = 0;
         let totalsUpdateInFlight = false;
         const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
-        const DEFAULT_TITLE = document.title;
-        let apiToken = getCookie('apiToken') || '';
+        const DEFAULT_TITLE = 'Clock-Out';
+
+        // History state
+        let allEntries = [];
+        let currentPage = 1;
+        let allUniqueDates = [];
+        let expandedDays = new Set();
+        let allProjects = [];
+        let hoverPreviewElement = null;
+        let isDragging = false;
+        let dragStartSlot = null;
+        let dragEndSlot = null;
+        let dragDateKey = null;
+        let pendingTimeRange = null;
+        let pendingEntryIdForProjectChange = null;
+        let timeIndicatorStart = null;
+        let timeIndicatorEnd = null;
+
+        // ============ PANE NAVIGATION ============
+        const paneContainer = document.getElementById('paneContainer');
+        let currentPane = 1; // Start on Track (center)
+
+        function scrollToPane(index) {
+            const paneWidth = window.innerWidth;
+            paneContainer.scrollTo({
+                left: index * paneWidth,
+                behavior: 'smooth'
+            });
+        }
+
+        function updatePageIndicator() {
+            const scrollLeft = paneContainer.scrollLeft;
+            const paneWidth = window.innerWidth;
+            const newPane = Math.round(scrollLeft / paneWidth);
+
+            if (newPane !== currentPane) {
+                currentPane = newPane;
+            }
+
+            document.querySelectorAll('.page-dot').forEach((dot, i) => {
+                dot.classList.toggle('active', i === currentPane);
+            });
+        }
+
+        paneContainer.addEventListener('scroll', updatePageIndicator);
+
+        // Scroll to center pane (Track) on load
+        window.addEventListener('load', () => {
+            scrollToPane(1);
+        });
+
+        // ============ UTILITY FUNCTIONS ============
+        function getCookie(name) {
+            const cname = name + "=";
+            const decodedCookie = decodeURIComponent(document.cookie);
+            const ca = decodedCookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') c = c.substring(1);
+                if (c.indexOf(cname) === 0) return c.substring(cname.length, c.length);
+            }
+            return "";
+        }
+
+        function setCookie(name, value, days) {
+            const d = new Date();
+            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+            document.cookie = name + "=" + value + ";expires=" + d.toUTCString() + ";path=/";
+        }
 
         function getApiHeaders() {
             return {
@@ -65,28 +777,86 @@
             };
         }
 
+        function formatElapsedDuration(durationSeconds) {
+            const totalSeconds = Math.max(0, Math.floor(durationSeconds));
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+            return `${Math.floor(totalSeconds / 60)}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function formatDuration(seconds) {
+            if (seconds < 0) return 'Running...';
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return hours > 0 ? `${hours}h ${minutes}m ${secs}s` : `${minutes}m ${secs}s`;
+        }
+
+        function formatDurationFromSeconds(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return hours > 0 ? `${hours}h ${minutes}m ${secs}s` : `${minutes}m ${secs}s`;
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function formatDateWithDayOfWeek(dateString) {
+            const [year, month, day] = dateString.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            return `${dateString} ${daysOfWeek[date.getDay()]}`;
+        }
+
+        function formatTime(dateString) {
+            const date = new Date(dateString);
+            return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+        }
+
+        function formatDateTimeForInput(dateString) {
+            const date = new Date(dateString);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
+        function updateDocumentTitle() {
+            if (currentTaskName && currentTaskStartTime instanceof Date) {
+                const elapsedSeconds = (Date.now() - currentTaskStartTime.getTime()) / 1000;
+                document.title = `${formatElapsedDuration(elapsedSeconds)} ${currentTaskName}`;
+                return;
+            }
+            document.title = DEFAULT_TITLE;
+        }
+
+        // ============ TRACK PANE LOGIC ============
         function getAdjustedTotals() {
             const totals = { ...cachedProjectTotals };
             let totalHours = cachedTotalHours;
-
             if (currentTaskName && currentTaskStartTime) {
                 const now = Date.now();
                 const windowStart = now - 168 * 60 * 60 * 1000;
-                // Clamp start time to window start
                 const effectiveStart = Math.max(currentTaskStartTime.getTime(), windowStart);
                 const currentElapsedHours = (now - effectiveStart) / 3600000;
-
-                // Calculate elapsed at last update, also clamped to window
                 const effectiveStartAtUpdate = Math.max(currentTaskStartTime.getTime(), windowStart);
-                const elapsedAtUpdateClamped = totalsLastUpdatedAt
-                    ? Math.max(0, (totalsLastUpdatedAt - effectiveStartAtUpdate) / 3600000)
-                    : 0;
-
+                const elapsedAtUpdateClamped = totalsLastUpdatedAt ? Math.max(0, (totalsLastUpdatedAt - effectiveStartAtUpdate) / 3600000) : 0;
                 const delta = Math.max(0, currentElapsedHours - elapsedAtUpdateClamped);
                 totals[currentTaskName] = (totals[currentTaskName] || 0) + delta;
                 totalHours += delta;
             }
-
             return { totals, totalHours };
         }
 
@@ -96,14 +866,10 @@
                 const total = projectTotals[project.name] || 0;
                 const ratio = Math.max(0, Math.min(total / target, 2));
                 const label = document.getElementById(project.name);
-                if (!label) {
-                    return;
-                }
+                if (!label) return;
                 const fill = label.previousElementSibling;
                 fill.style.height = `${ratio * 50}%`;
-
                 const difference = Math.round(total - target);
-
                 const offset = label.nextElementSibling;
                 if (Math.abs(difference) > 0) {
                     offset.innerText = difference > 0 ? `+${difference}` : `${difference}`;
@@ -116,16 +882,11 @@
         }
 
         function renderUntracked(totalHours) {
-            const totalWeekHours = 168;
-            const trackedHours = totalHours;
-            const untrackedHours = Math.max(0, totalWeekHours - trackedHours);
-
+            const untrackedHours = Math.max(0, 168 - totalHours);
             const hours = Math.floor(untrackedHours);
             const minutes = Math.round((untrackedHours - hours) * 60);
-
             const untrackedText = document.getElementById('untrackedText');
             const untrackedIndicator = document.getElementById('untrackedIndicator');
-
             if (untrackedHours > 1) {
                 untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
                 untrackedIndicator.style.display = 'block';
@@ -134,56 +895,26 @@
             }
         }
 
-        function formatElapsedDuration(durationSeconds) {
-            const totalSeconds = Math.max(0, Math.floor(durationSeconds));
-            const hours = Math.floor(totalSeconds / 3600);
-            const minutes = Math.floor((totalSeconds % 3600) / 60);
-            const seconds = totalSeconds % 60;
-            if (hours > 0) {
-                return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-            }
-            const totalMinutes = Math.floor(totalSeconds / 60);
-            return `${totalMinutes}:${seconds.toString().padStart(2, '0')}`;
-        }
-
-        function updateDocumentTitle() {
-            if (currentTaskName && currentTaskStartTime instanceof Date) {
-                const elapsedSeconds = (Date.now() - currentTaskStartTime.getTime()) / 1000;
-                const formattedDuration = formatElapsedDuration(elapsedSeconds);
-                document.title = `${formattedDuration} ${currentTaskName}`;
-                return;
-            }
-            document.title = DEFAULT_TITLE;
+        function renderDayIndicators() {
+            projects.forEach(project => {
+                const indicator = document.getElementById(`days-${project.name}`);
+                if (!indicator) return;
+                let days = cachedProjectDays[project.name] || [false, false, false, false, false, false, false];
+                if (currentTaskName === project.name) {
+                    days = [...days];
+                    days[6] = true;
+                }
+                indicator.textContent = days.map(active => active ? '◉' : '◯').join('');
+            });
         }
 
         function renderTotalsFromCache() {
-            if (!projects.length) {
-                return;
-            }
+            if (!projects.length) return;
             const { totals, totalHours } = getAdjustedTotals();
             renderProjectTotals(totals);
             renderDayIndicators();
             renderUntracked(totalHours);
         }
-
-        function renderDayIndicators() {
-            projects.forEach(project => {
-                const indicator = document.getElementById(`days-${project.name}`);
-                if (!indicator) return;
-
-                let days = cachedProjectDays[project.name] || [false, false, false, false, false, false, false];
-
-                // If this project is currently running, mark today as active
-                if (currentTaskName === project.name) {
-                    days = [...days];
-                    days[6] = true;
-                }
-
-                const symbols = days.map(active => active ? '◉' : '◯').join('');
-                indicator.textContent = symbols;
-            });
-        }
-
 
         async function fetchProjects() {
             if (!apiToken) {
@@ -191,35 +922,21 @@
                 generateTaskContainers();
                 return;
             }
-
             try {
-                const response = await fetch('/api/projects', {
-                    headers: getApiHeaders()
-                });
-
-                if (response.status === 401) {
-                    console.error('Invalid API key');
-                    projects = [];
-                    generateTaskContainers();
-                    return;
-                }
-
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch projects: ${response.status}`);
-                }
-
+                const response = await fetch('/api/projects', { headers: getApiHeaders() });
+                if (!response.ok) throw new Error('Failed to fetch');
                 const data = await response.json();
-                projects = data.map(project => ({
-                    id: project.id,
-                    name: project.name,
-                    targetTime: project.target_hours,
-                    color: project.color || '#D15540'
+                projects = data.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    targetTime: p.target_hours,
+                    color: p.color || '#D15540'
                 })).sort((a, b) => b.targetTime - a.targetTime);
-
+                projectColors = {};
+                data.forEach(p => { projectColors[p.name] = p.color || '#D15540'; });
+                allProjects = data;
                 generateTaskContainers();
-                getCurrentTask().then(() => {
-                    updateTotals();
-                });
+                getCurrentTask().then(() => updateTotals());
             } catch (error) {
                 console.error('Error fetching projects:', error);
                 projects = [];
@@ -230,62 +947,36 @@
         function generateTaskContainers() {
             const taskGrid = document.getElementById('taskGrid');
             taskGrid.innerHTML = '';
-
-            const totalTargetHours = projects.reduce((sum, project) => sum + project.targetTime, 0);
-            console.log(`Total target hours: ${totalTargetHours}`);
-
-            if (totalTargetHours !== 168) {
-                console.warn(`Warning: Total target hours (${totalTargetHours}) is not equal to 168.`);
-            }
-
             const isPortrait = window.innerHeight > window.innerWidth;
             const projectCount = projects.length;
-
             if (isPortrait) {
-                if (projectCount > 12) {
-                    taskGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
-                    taskGrid.style.gridTemplateRows = 'repeat(5, 1fr)';
-                } else {
-                    taskGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
-                    taskGrid.style.gridTemplateRows = 'repeat(4, 1fr)';
-                }
+                taskGrid.style.gridTemplateColumns = projectCount > 12 ? 'repeat(3, 1fr)' : 'repeat(3, 1fr)';
+                taskGrid.style.gridTemplateRows = projectCount > 12 ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)';
             } else {
-                if (projectCount > 12) {
-                    taskGrid.style.gridTemplateColumns = 'repeat(5, 1fr)';
-                    taskGrid.style.gridTemplateRows = 'repeat(3, 1fr)';
-                } else {
-                    taskGrid.style.gridTemplateColumns = 'repeat(4, 1fr)';
-                    taskGrid.style.gridTemplateRows = 'repeat(3, 1fr)';
-                }
+                taskGrid.style.gridTemplateColumns = projectCount > 12 ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)';
+                taskGrid.style.gridTemplateRows = 'repeat(3, 1fr)';
             }
-
-            projects.forEach((project) => {
+            projects.forEach(project => {
                 const container = document.createElement('div');
                 container.className = 'container';
                 container.onclick = () => startTask(project.id, project.name);
-
                 const fill = document.createElement('div');
                 fill.className = 'fill';
                 fill.style.backgroundColor = project.color;
-
                 const label = document.createElement('span');
                 label.className = 'label';
                 label.id = project.name;
                 label.textContent = project.name;
-
                 const offset = document.createElement('span');
                 offset.className = 'offset';
-
                 const dayIndicator = document.createElement('span');
                 dayIndicator.className = 'day-indicator';
                 dayIndicator.id = `days-${project.name}`;
                 dayIndicator.textContent = '◯◯◯◯◯◯◯';
-
                 container.appendChild(fill);
                 container.appendChild(label);
                 container.appendChild(offset);
                 container.appendChild(dayIndicator);
-
                 taskGrid.appendChild(container);
             });
             renderTotalsFromCache();
@@ -296,26 +987,14 @@
                 currentTaskId = null;
                 currentTaskName = null;
                 currentTaskStartTime = null;
-                currentTaskElapsedAtLastUpdateHours = 0;
                 updateButtonStyles(null);
                 renderTotalsFromCache();
                 updateDocumentTitle();
                 return;
             }
-
             try {
-                const response = await fetch('/api/time-entries/current', {
-                    headers: getApiHeaders()
-                });
-
-                if (response.status === 401) {
-                    throw new Error('Invalid API key');
-                }
-
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch current task: ${response.status}`);
-                }
-
+                const response = await fetch('/api/time-entries/current', { headers: getApiHeaders() });
+                if (!response.ok) throw new Error('Failed');
                 const data = await response.json();
                 if (data && data.id) {
                     currentTaskId = data.id;
@@ -323,30 +1002,24 @@
                     currentTaskStartTime = data.start ? new Date(data.start) : null;
                     if (currentTaskStartTime && totalsLastUpdatedAt) {
                         currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
-                    } else {
-                        currentTaskElapsedAtLastUpdateHours = 0;
                     }
                     if (currentTaskName && !(currentTaskName in cachedProjectTotals)) {
                         cachedProjectTotals[currentTaskName] = 0;
                     }
                     updateButtonStyles(currentTaskName);
-                    renderTotalsFromCache();
-                    updateDocumentTitle();
                 } else {
                     currentTaskId = null;
                     currentTaskName = null;
                     currentTaskStartTime = null;
-                    currentTaskElapsedAtLastUpdateHours = 0;
                     updateButtonStyles(null);
-                    renderTotalsFromCache();
-                    updateDocumentTitle();
                 }
+                renderTotalsFromCache();
+                updateDocumentTitle();
             } catch (error) {
                 console.error('Error getting current task:', error);
                 currentTaskId = null;
                 currentTaskName = null;
                 currentTaskStartTime = null;
-                currentTaskElapsedAtLastUpdateHours = 0;
                 updateButtonStyles(null);
                 renderTotalsFromCache();
                 updateDocumentTitle();
@@ -354,32 +1027,17 @@
         }
 
         async function updateTotals() {
-            if (totalsUpdateInFlight || !apiToken) {
-                return;
-            }
+            if (totalsUpdateInFlight || !apiToken) return;
             totalsUpdateInFlight = true;
             try {
-                const response = await fetch('/api/time-entries', {
-                    headers: getApiHeaders()
-                });
-
-                if (response.status === 401) {
-                    throw new Error('Invalid API key');
-                }
-
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch time entries: ${response.status}`);
-                }
-
+                const response = await fetch('/api/time-entries', { headers: getApiHeaders() });
+                if (!response.ok) throw new Error('Failed');
                 const timeEntries = await response.json();
-
                 let totalHours = 0;
                 let projectTimes = {};
-                let projectDays = {}; // Maps project name to Set of day indices (0-6)
+                let projectDays = {};
                 const now = new Date();
                 const windowStart = new Date(now.getTime() - 168 * 60 * 60 * 1000);
-
-                // Calculate midnight boundaries for the last 7 days
                 const todayMidnight = new Date(now);
                 todayMidnight.setHours(0, 0, 0, 0);
                 const dayBoundaries = [];
@@ -388,52 +1046,31 @@
                     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
                     dayBoundaries.push({ start: dayStart, end: dayEnd, index: 6 - i });
                 }
-
                 timeEntries.forEach(entry => {
                     const start = new Date(entry.start);
                     const end = entry.duration < 0 ? now : new Date(entry.stop);
-
-                    // Calculate effective start (clamp to window start)
                     const effectiveStart = start < windowStart ? windowStart : start;
-
-                    // Only count time within the 168-hour window
                     const durationMs = Math.max(0, end.getTime() - effectiveStart.getTime());
                     const durationHours = durationMs / 3600000;
-
                     totalHours += durationHours;
                     const projectName = entry.name;
                     if (projectName) {
-                        if (projectTimes[projectName]) {
-                            projectTimes[projectName] += durationHours;
-                        } else {
-                            projectTimes[projectName] = durationHours;
-                        }
-
-                        // Check which days this entry spans
-                        if (!projectDays[projectName]) {
-                            projectDays[projectName] = new Set();
-                        }
+                        projectTimes[projectName] = (projectTimes[projectName] || 0) + durationHours;
+                        if (!projectDays[projectName]) projectDays[projectName] = new Set();
                         dayBoundaries.forEach(day => {
-                            // Entry overlaps with day if entry.start < day.end AND entry.end > day.start
-                            if (start < day.end && end > day.start) {
-                                projectDays[projectName].add(day.index);
-                            }
+                            if (start < day.end && end > day.start) projectDays[projectName].add(day.index);
                         });
                     }
                 });
-
                 cachedProjectTotals = projectTimes;
-                // Convert Sets to arrays of booleans
                 cachedProjectDays = {};
-                for (const projectName in projectDays) {
-                    cachedProjectDays[projectName] = Array.from({ length: 7 }, (_, i) => projectDays[projectName].has(i));
+                for (const pn in projectDays) {
+                    cachedProjectDays[pn] = Array.from({ length: 7 }, (_, i) => projectDays[pn].has(i));
                 }
                 cachedTotalHours = totalHours;
                 totalsLastUpdatedAt = Date.now();
                 if (currentTaskStartTime) {
                     currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
-                } else {
-                    currentTaskElapsedAtLastUpdateHours = 0;
                 }
                 renderTotalsFromCache();
             } catch (error) {
@@ -443,66 +1080,24 @@
             }
         }
 
-        setInterval(() => {
-            renderTotalsFromCache();
-            if (!totalsLastUpdatedAt || (Date.now() - totalsLastUpdatedAt) >= TOTALS_REFRESH_INTERVAL_MS) {
-                updateTotals();
-            }
-        }, 60 * 1000);
-
-        setInterval(updateDocumentTitle, 1000);
-        updateDocumentTitle();
-
-        // Refresh data when tab becomes visible again (e.g., laptop wakes up)
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                getCurrentTask();
-                updateTotals();
-            }
-        });
-
         async function startTask(projectId, projectName) {
-            if (!apiToken) {
-                alert('Please enter an API key in settings first.');
-                return;
-            }
-
-            // If clicking the same task that's running, stop it
+            if (!apiToken) { alert('Please enter an API key in settings first.'); return; }
             if (currentTaskId && currentTaskName === projectName) {
                 await stopCurrentTask();
                 return;
             }
-
             try {
                 const response = await fetch('/api/time-entries', {
                     method: 'POST',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({
-                        project_id: projectId
-                    })
+                    body: JSON.stringify({ project_id: projectId })
                 });
-
-                if (response.status === 401) {
-                    alert('Invalid API key.');
-                    return;
-                }
-
-                if (!response.ok) {
-                    const error = await response.json();
-                    alert(error.error || 'Failed to start task.');
-                    return;
-                }
-
+                if (!response.ok) throw new Error('Failed');
                 const data = await response.json();
                 currentTaskId = data.id;
                 currentTaskName = projectName;
                 currentTaskStartTime = data.start ? new Date(data.start) : new Date();
-                if (!(projectName in cachedProjectTotals)) {
-                    cachedProjectTotals[projectName] = 0;
-                }
-                currentTaskElapsedAtLastUpdateHours = totalsLastUpdatedAt && currentTaskStartTime
-                    ? Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000)
-                    : 0;
+                if (!(projectName in cachedProjectTotals)) cachedProjectTotals[projectName] = 0;
                 renderTotalsFromCache();
                 updateButtonStyles(projectName);
                 updateDocumentTitle();
@@ -513,242 +1108,63 @@
         }
 
         async function stopCurrentTask() {
-            if (!apiToken || !currentTaskId) {
-                return;
-            }
-
+            if (!apiToken || !currentTaskId) return;
             try {
                 const response = await fetch(`/api/time-entries/${currentTaskId}/stop`, {
                     method: 'PATCH',
                     headers: getApiHeaders()
                 });
-
-                if (response.status === 401) {
-                    throw new Error('Invalid API key');
-                }
-
-                if (!response.ok) {
-                    throw new Error('Failed to stop task');
-                }
-
+                if (!response.ok) throw new Error('Failed');
                 currentTaskId = null;
                 currentTaskName = null;
                 currentTaskStartTime = null;
-                currentTaskElapsedAtLastUpdateHours = 0;
                 renderTotalsFromCache();
                 updateButtonStyles(null);
                 updateDocumentTitle();
             } catch (error) {
                 console.error('Error stopping task:', error);
-                alert('Error stopping task.');
             }
         }
 
         function updateButtonStyles(activeTask) {
-            const buttons = document.querySelectorAll('.container');
-            buttons.forEach(button => {
+            document.querySelectorAll('.container').forEach(button => {
                 const taskName = button.querySelector('.label').innerText;
-                if (taskName === activeTask) {
-                    button.style.opacity = '1';
-                } else {
-                    button.style.opacity = '0.4';
-                }
+                button.style.opacity = taskName === activeTask ? '1' : '0.4';
             });
         }
-
-        function setCookie(name, value, days) {
-            const d = new Date();
-            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
-            const expires = "expires=" + d.toUTCString();
-            document.cookie = name + "=" + value + ";" + expires + ";path=/";
-        }
-
-        function getCookie(name) {
-            const cname = name + "=";
-            const decodedCookie = decodeURIComponent(document.cookie);
-            const ca = decodedCookie.split(';');
-            for (let i = 0; i < ca.length; i++) {
-                let c = ca[i];
-                while (c.charAt(0) === ' ') {
-                    c = c.substring(1);
-                }
-                if (c.indexOf(cname) === 0) {
-                    return c.substring(cname.length, c.length);
-                }
-            }
-            return "";
-        }
-
-        if (apiToken) {
-            fetchProjects();
-        }
-
-        // WebSocket connection for real-time updates
-        let ws = null;
-        let wsReconnectTimeout = null;
-
-        function connectWebSocket() {
-            if (!apiToken) return;
-
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}?api_key=${apiToken}`;
-
-            ws = new WebSocket(wsUrl);
-
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-            };
-
-            ws.onmessage = (event) => {
-                try {
-                    const message = JSON.parse(event.data);
-                    handleWebSocketMessage(message);
-                } catch (error) {
-                    console.error('Error parsing WebSocket message:', error);
-                }
-            };
-
-            ws.onclose = () => {
-                console.log('WebSocket disconnected, reconnecting...');
-                ws = null;
-                // Reconnect after 2 seconds
-                wsReconnectTimeout = setTimeout(connectWebSocket, 2000);
-            };
-
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-        }
-
-        function handleWebSocketMessage(message) {
-            console.log('WebSocket message:', message.type);
-
-            switch (message.type) {
-                case 'project_created':
-                case 'project_updated':
-                case 'project_deleted':
-                    // Refresh projects list
-                    fetchProjects();
-                    break;
-
-                case 'time_entry_started':
-                    // Update current task state
-                    currentTaskId = message.data.id;
-                    currentTaskName = message.data.name;
-                    currentTaskStartTime = message.data.start ? new Date(message.data.start) : new Date();
-                    if (!(message.data.name in cachedProjectTotals)) {
-                        cachedProjectTotals[message.data.name] = 0;
-                    }
-                    currentTaskElapsedAtLastUpdateHours = totalsLastUpdatedAt && currentTaskStartTime
-                        ? Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000)
-                        : 0;
-                    renderTotalsFromCache();
-                    updateButtonStyles(message.data.name);
-                    updateDocumentTitle();
-                    break;
-
-                case 'time_entry_stopped':
-                    // Clear current task if this was the running one
-                    if (currentTaskId === message.data.id) {
-                        currentTaskId = null;
-                        currentTaskName = null;
-                        currentTaskStartTime = null;
-                        currentTaskElapsedAtLastUpdateHours = 0;
-                        updateButtonStyles(null);
-                        updateDocumentTitle();
-                    }
-                    // Refresh totals
-                    updateTotals();
-                    break;
-
-                case 'time_entry_updated':
-                case 'time_entry_deleted':
-                    // Refresh totals and current task
-                    updateTotals();
-                    getCurrentTask();
-                    break;
-            }
-        }
-
-        // Connect WebSocket if we have an API token
-        if (apiToken) {
-            connectWebSocket();
-        }
-
-        // Handle Escape key to navigate to history page
-        // Use capture phase and window to ensure it works regardless of focus
-        window.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' || event.keyCode === 27) {
-                event.preventDefault();
-                event.stopPropagation();
-                window.location.href = '/history';
-            }
-        }, true);
 
         async function fetchRecentEntries() {
             if (!apiToken) return [];
             try {
-                const response = await fetch('/api/time-entries?all=true', {
-                    headers: getApiHeaders()
-                });
+                const response = await fetch('/api/time-entries?all=true', { headers: getApiHeaders() });
                 if (!response.ok) return [];
                 return await response.json();
-            } catch (error) {
-                console.error('Error fetching entries:', error);
-                return [];
-            }
+            } catch { return []; }
         }
 
         async function addTimeToCurrentTask(minutes) {
-            if (!apiToken) {
-                alert('Please enter an API key in settings first.');
-                return;
-            }
-
-            const allEntries = await fetchRecentEntries();
-            if (allEntries.length === 0) {
-                alert('No time entries found.');
-                return;
-            }
-
-            const currentEntry = allEntries[0];
-            const previousEntry = allEntries.length > 1 ? allEntries[1] : null;
-
-            if (!currentEntry) {
-                alert('No current time entry found.');
-                return;
-            }
-
+            if (!apiToken) { alert('Please enter an API key in settings first.'); return; }
+            const entries = await fetchRecentEntries();
+            if (entries.length === 0) { alert('No time entries found.'); return; }
+            const currentEntry = entries[0];
+            const previousEntry = entries.length > 1 ? entries[1] : null;
             try {
                 const currentStartTime = new Date(currentEntry.start);
                 const newCurrentStartTime = new Date(currentStartTime.getTime() - minutes * 60 * 1000);
-
-                const currentResponse = await fetch(`/api/time-entries/${currentEntry.id}`, {
+                await fetch(`/api/time-entries/${currentEntry.id}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({
-                        start_time: newCurrentStartTime.toISOString()
-                    })
+                    body: JSON.stringify({ start_time: newCurrentStartTime.toISOString() })
                 });
-
-                if (!currentResponse.ok) {
-                    const errorData = await currentResponse.json();
-                    throw new Error(errorData.error || 'Failed to update current entry');
-                }
-
                 if (previousEntry && previousEntry.stop) {
-                    const previousEndTime = new Date(previousEntry.stop);
-                    const newPreviousEndTime = new Date(previousEndTime.getTime() - minutes * 60 * 1000);
-
+                    const prevEndTime = new Date(previousEntry.stop);
+                    const newPrevEndTime = new Date(prevEndTime.getTime() - minutes * 60 * 1000);
                     await fetch(`/api/time-entries/${previousEntry.id}`, {
                         method: 'PUT',
                         headers: getApiHeaders(),
-                        body: JSON.stringify({
-                            end_time: newPreviousEndTime.toISOString()
-                        })
+                        body: JSON.stringify({ end_time: newPrevEndTime.toISOString() })
                     });
                 }
-
                 await updateTotals();
             } catch (error) {
                 console.error('Error adding time:', error);
@@ -757,26 +1173,1027 @@
         }
 
         async function addTenMinutes() {
-            const button = document.getElementById('addTenButton');
-            button.disabled = true;
+            document.getElementById('addTenButton').disabled = true;
             await addTimeToCurrentTask(10);
-            button.disabled = false;
+            document.getElementById('addTenButton').disabled = false;
         }
-
         async function addThirtyMinutes() {
-            const button = document.getElementById('addThirtyButton');
-            button.disabled = true;
+            document.getElementById('addThirtyButton').disabled = true;
             await addTimeToCurrentTask(30);
-            button.disabled = false;
+            document.getElementById('addThirtyButton').disabled = false;
+        }
+        async function addOneHour() {
+            document.getElementById('addHourButton').disabled = true;
+            await addTimeToCurrentTask(60);
+            document.getElementById('addHourButton').disabled = false;
         }
 
-        async function addOneHour() {
-            const button = document.getElementById('addHourButton');
-            button.disabled = true;
-            await addTimeToCurrentTask(60);
-            button.disabled = false;
+        // ============ HISTORY PANE LOGIC ============
+        function generateDisplayDates(uniqueDatesWithEntries) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayKey = formatDate(today.toISOString());
+            if (uniqueDatesWithEntries.length === 0) return [todayKey];
+            const oldestWithData = uniqueDatesWithEntries[uniqueDatesWithEntries.length - 1];
+            const allDates = [];
+            let currentDate = new Date(today);
+            const endDate = new Date(oldestWithData + 'T00:00:00');
+            while (currentDate >= endDate) {
+                allDates.push(formatDate(currentDate.toISOString()));
+                currentDate.setDate(currentDate.getDate() - 1);
+            }
+            return allDates;
+        }
+
+        async function loadTimeEntries(preservePage = false) {
+            if (!apiToken) {
+                document.getElementById('loadingMessage').style.display = 'none';
+                document.getElementById('errorMessage').style.display = 'block';
+                document.getElementById('errorMessage').textContent = 'No API key found. Please add one in Settings.';
+                document.getElementById('errorMessage').className = 'error';
+                return;
+            }
+            const savedPage = preservePage ? currentPage : null;
+            try {
+                const response = await fetch('/api/time-entries?all=true', { headers: getApiHeaders() });
+                if (!response.ok) throw new Error('Failed to load');
+                const entries = await response.json();
+                document.getElementById('loadingMessage').style.display = 'none';
+                allEntries = entries;
+                const datesSet = new Set();
+                allEntries.forEach(entry => datesSet.add(formatDate(entry.start)));
+                const uniqueDatesWithEntries = Array.from(datesSet).sort((a, b) => new Date(b) - new Date(a));
+                allUniqueDates = generateDisplayDates(uniqueDatesWithEntries);
+                if (preservePage && savedPage !== null) {
+                    const totalPages = Math.ceil(allUniqueDates.length / 7);
+                    currentPage = Math.min(savedPage, totalPages);
+                    if (currentPage < 1) currentPage = 1;
+                } else {
+                    currentPage = 1;
+                }
+                renderEntries();
+            } catch (error) {
+                console.error('Error loading entries:', error);
+                document.getElementById('loadingMessage').style.display = 'none';
+                document.getElementById('errorMessage').style.display = 'block';
+                document.getElementById('errorMessage').textContent = error.message;
+                document.getElementById('errorMessage').className = 'error';
+            }
+        }
+
+        function renderTimeEntry(entry) {
+            const isRunning = !entry.stop || entry.duration < 0;
+            let duration, durationHours, widthPercentage;
+            if (isRunning) {
+                const now = new Date();
+                const start = new Date(entry.start);
+                const currentDurationSeconds = Math.floor((now - start) / 1000);
+                durationHours = currentDurationSeconds / 3600;
+                widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                duration = formatDurationFromSeconds(currentDurationSeconds);
+            } else {
+                duration = formatDuration(entry.duration);
+                durationHours = entry.duration / 3600;
+                widthPercentage = Math.min((durationHours / 2) * 100, 100);
+            }
+            const projectName = entry.name || 'Unknown Project';
+            const projectColor = projectColors[projectName] || '#D15540';
+            const runningAttr = isRunning ? `data-running="true" data-start-time="${entry.start}"` : '';
+            const startTime = formatTime(entry.start);
+            const splitDisabled = isRunning ? 'disabled' : '';
+            return `
+                <div class="time-entry" data-entry-id="${entry.id}" ${runningAttr} style="--visualization-color: ${projectColor}; --visualization-width: ${widthPercentage}%;">
+                    <div class="time-entry-header">
+                        <span class="project-name project-name-colored" style="background-color: ${projectColor}; cursor: pointer;" onclick="changeEntryProject(${entry.id})">${projectName}</span>
+                        <div>
+                            <span class="duration">${duration}</span>
+                            <button class="edit-button" onclick="editTimeEntry(${entry.id})" title="Edit">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M21.731 2.269a2.625 2.625 0 0 0-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 0 0 0-3.712ZM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 0 0-1.32 2.214l-.8 2.685a.75.75 0 0 0 .933.933l2.685-.8a5.25 5.25 0 0 0 2.214-1.32l8.4-8.4Z"/><path d="M5.25 5.25a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3V13.5a.75.75 0 0 0-1.5 0v5.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5V8.25a1.5 1.5 0 0 1 1.5-1.5h5.25a.75.75 0 0 0 0-1.5H5.25Z"/></svg>
+                            </button>
+                            <button class="split-button" onclick="splitTimeEntry(${entry.id})" title="Split" ${splitDisabled}>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M11.47 2.47a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1-1.06 1.06l-2.47-2.47V12h4.5a.75.75 0 0 1 0 1.5h-4.5v6.19l2.47-2.47a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0l-3.75-3.75a.75.75 0 1 1 1.06-1.06l2.47 2.47V13.5h-4.5a.75.75 0 0 1 0-1.5h4.5V4.81L8.78 7.28a.75.75 0 0 1-1.06-1.06l3.75-3.75Z" clip-rule="evenodd"/></svg>
+                            </button>
+                            <button class="delete-button" onclick="deleteTimeEntry(${entry.id})" title="Delete">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-.355 5.945a.75.75 0 1 0-1.5.058l.347 9a.75.75 0 1 0 1.499-.058l-.346-9Zm5.48.058a.75.75 0 1 0-1.498-.058l-.347 9a.75.75 0 0 0 1.5.058l.345-9Z" clip-rule="evenodd"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="edit-form">
+                        <input type="datetime-local" class="edit-input start-input" value="${formatDateTimeForInput(entry.start)}">
+                        <input type="datetime-local" class="edit-input end-input" value="${entry.stop ? formatDateTimeForInput(entry.stop) : ''}">
+                        <button class="save-button" onclick="saveTimeEntry(${entry.id})">Save</button>
+                        <button class="cancel-button" onclick="cancelEdit(${entry.id})">Cancel</button>
+                    </div>
+                    <div class="time-range">${startTime}</div>
+                </div>
+            `;
+        }
+
+        function renderUntrackedTimeEntry(gapStartTime, gapEndTime, previousEntryId, nextEntryId) {
+            const startTime = formatTime(gapStartTime);
+            const durationSeconds = Math.floor((new Date(gapEndTime) - new Date(gapStartTime)) / 1000);
+            const duration = formatDurationFromSeconds(durationSeconds);
+            const durationHours = durationSeconds / 3600;
+            const widthPercentage = Math.min((durationHours / 2) * 100, 100);
+            return `
+                <div class="time-entry" style="--visualization-color: #666666; --visualization-width: ${widthPercentage}%; opacity: 0.7;">
+                    <div class="time-entry-header">
+                        <span class="project-name project-name-colored" style="background-color: #666666;">Untracked Time</span>
+                        <div>
+                            <span class="duration">${duration}</span>
+                            <button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">Extend Above</button>
+                            <button class="extend-button" onclick="extendBelow(${previousEntryId}, ${nextEntryId}, '${gapEndTime}')">Extend Below</button>
+                        </div>
+                    </div>
+                    <div class="time-range">${startTime}</div>
+                </div>
+            `;
+        }
+
+        function renderDayMinimap(dateKey, items, allEntriesForMinimap) {
+            const dayStart = new Date(dateKey + 'T00:00:00');
+            const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+            const dayDuration = dayEnd.getTime() - dayStart.getTime();
+            const overlappingEntries = [];
+            items.forEach(item => { if (item.type === 'entry') overlappingEntries.push(item.entry); });
+            if (allEntriesForMinimap) {
+                allEntriesForMinimap.forEach(entry => {
+                    const entryStart = new Date(entry.start);
+                    const entryEnd = entry.stop && entry.duration >= 0 ? new Date(entry.stop) : new Date();
+                    if (entryStart.getTime() < dayEnd.getTime() && entryEnd.getTime() > dayStart.getTime()) {
+                        if (!overlappingEntries.find(e => e.id === entry.id)) overlappingEntries.push(entry);
+                    }
+                });
+            }
+            overlappingEntries.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+            let segments = [];
+            overlappingEntries.forEach(entry => {
+                let startTime = new Date(entry.start);
+                let endTime = entry.stop && entry.duration >= 0 ? new Date(entry.stop) : new Date();
+                const visibleStart = Math.max(startTime.getTime(), dayStart.getTime());
+                const visibleEnd = Math.min(endTime.getTime(), dayEnd.getTime());
+                if (visibleStart < visibleEnd) {
+                    const leftPercent = ((visibleStart - dayStart.getTime()) / dayDuration) * 100;
+                    const widthPercent = ((visibleEnd - visibleStart) / dayDuration) * 100;
+                    const projectName = entry.name || 'Unknown Project';
+                    const projectColor = projectColors[projectName] || '#D15540';
+                    if (widthPercent > 0 && leftPercent < 100) {
+                        segments.push({ left: Math.max(0, leftPercent), width: Math.min(100 - leftPercent, widthPercent), color: projectColor, type: 'entry' });
+                    }
+                }
+            });
+            items.forEach(item => {
+                if (item.type === 'gap') {
+                    const gapStart = new Date(item.gapStart);
+                    const gapEnd = new Date(item.gapEnd);
+                    const visibleStart = Math.max(gapStart.getTime(), dayStart.getTime());
+                    const visibleEnd = Math.min(gapEnd.getTime(), dayEnd.getTime());
+                    if (visibleStart < visibleEnd) {
+                        const leftPercent = ((visibleStart - dayStart.getTime()) / dayDuration) * 100;
+                        const widthPercent = ((visibleEnd - visibleStart) / dayDuration) * 100;
+                        if (widthPercent > 0 && leftPercent < 100) {
+                            segments.push({ left: Math.max(0, leftPercent), width: Math.min(100 - leftPercent, widthPercent), color: 'rgba(102, 102, 102, 0.3)', type: 'gap' });
+                        }
+                    }
+                }
+            });
+            let segmentsHtml = segments.map(s => `<div class="minimap-segment ${s.type === 'gap' ? 'untracked' : ''}" style="left: ${s.left}%; width: ${s.width}%; background-color: ${s.color};"></div>`).join('');
+            return `<div class="day-minimap" data-date-key="${dateKey}">${segmentsHtml}</div>`;
+        }
+
+        function renderEmptyDayMinimap(dateKey, bleedingEntries) {
+            let segmentsHtml = '';
+            if (bleedingEntries && bleedingEntries.length > 0) {
+                const dayStart = new Date(dateKey + 'T00:00:00');
+                const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+                const dayDuration = dayEnd.getTime() - dayStart.getTime();
+                bleedingEntries.forEach(entry => {
+                    const entryStart = new Date(entry.start);
+                    const entryEnd = entry.stop && entry.duration >= 0 ? new Date(entry.stop) : new Date();
+                    const visibleStart = Math.max(entryStart.getTime(), dayStart.getTime());
+                    const visibleEnd = Math.min(entryEnd.getTime(), dayEnd.getTime());
+                    if (visibleStart < visibleEnd) {
+                        const leftPercent = ((visibleStart - dayStart.getTime()) / dayDuration) * 100;
+                        const widthPercent = ((visibleEnd - visibleStart) / dayDuration) * 100;
+                        const projectName = entry.name || 'Unknown Project';
+                        const projectColor = projectColors[projectName] || '#D15540';
+                        segmentsHtml += `<div class="minimap-segment" style="left: ${leftPercent}%; width: ${widthPercent}%; background-color: ${projectColor};"></div>`;
+                    }
+                });
+            }
+            return `<div class="day-minimap day-minimap-empty" data-date-key="${dateKey}" data-empty="true">${segmentsHtml}</div>`;
+        }
+
+        function renderEntries() {
+            if (allUniqueDates.length === 0) {
+                document.getElementById('timeEntriesList').innerHTML = '<div class="loading">No time entries found.</div>';
+                document.getElementById('pagination').style.display = 'none';
+                return;
+            }
+            const daysPerPage = 7;
+            const totalPages = Math.ceil(allUniqueDates.length / daysPerPage);
+            if (currentPage < 1) currentPage = 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            const startIndex = (currentPage - 1) * daysPerPage;
+            const endIndex = Math.min(startIndex + daysPerPage, allUniqueDates.length);
+            const currentPageDates = allUniqueDates.slice(startIndex, endIndex);
+            const today = new Date();
+            const todayDateKey = formatDate(today.toISOString());
+            if (currentPageDates.includes(todayDateKey)) expandedDays.add(todayDateKey);
+            const entriesByDate = {};
+            allEntries.forEach(entry => {
+                const dateKey = formatDate(entry.start);
+                if (!entriesByDate[dateKey]) entriesByDate[dateKey] = [];
+                entriesByDate[dateKey].push(entry);
+            });
+            Object.keys(entriesByDate).forEach(dateKey => {
+                entriesByDate[dateKey].sort((a, b) => new Date(b.start) - new Date(a.start));
+            });
+            let entriesHtml = '';
+            currentPageDates.forEach(dateKey => {
+                const currentDayEntries = entriesByDate[dateKey] || [];
+                let allItems = [];
+                let previousEntryEndTime = null;
+                let previousEntry = null;
+                const chronological = [...currentDayEntries].sort((a, b) => new Date(a.start) - new Date(b.start));
+                chronological.forEach(entry => {
+                    const entryDateKey = formatDate(entry.start);
+                    if (previousEntryEndTime !== null && previousEntry !== null) {
+                        const entryStartTime = new Date(entry.start);
+                        const prevEndTime = new Date(previousEntryEndTime);
+                        if (Math.abs(entryStartTime.getTime() - prevEndTime.getTime()) > 1000) {
+                            allItems.push({ type: 'gap', gapStart: previousEntryEndTime, gapEnd: entry.start, dateKey: formatDate(previousEntryEndTime), previousEntryId: previousEntry.id, nextEntryId: entry.id });
+                        }
+                    }
+                    allItems.push({ type: 'entry', entry, dateKey: entryDateKey });
+                    if (entry.stop && entry.duration >= 0) {
+                        previousEntryEndTime = entry.stop;
+                        previousEntry = entry;
+                    } else {
+                        previousEntryEndTime = null;
+                        previousEntry = null;
+                    }
+                });
+                const itemsByDate = {};
+                allItems.forEach(item => {
+                    if (!itemsByDate[item.dateKey]) itemsByDate[item.dateKey] = [];
+                    itemsByDate[item.dateKey].push(item);
+                });
+                if (itemsByDate[dateKey] && itemsByDate[dateKey].length > 0) {
+                    entriesHtml += `<div class="date-header">${formatDateWithDayOfWeek(dateKey)}</div>`;
+                    entriesHtml += renderDayMinimap(dateKey, itemsByDate[dateKey], allEntries);
+                    const isExpanded = expandedDays.has(dateKey);
+                    entriesHtml += `<div class="day-entries ${isExpanded ? 'expanded' : ''}" data-date-key="${dateKey}">`;
+                    const itemsWithTransitions = itemsByDate[dateKey].map(item => ({ ...item }));
+                    itemsWithTransitions.reverse().forEach(item => {
+                        if (item.type === 'gap') entriesHtml += renderUntrackedTimeEntry(item.gapStart, item.gapEnd, item.previousEntryId, item.nextEntryId);
+                        else if (item.type === 'entry') entriesHtml += renderTimeEntry(item.entry);
+                    });
+                    entriesHtml += `</div>`;
+                } else {
+                    const dayStart = new Date(dateKey + 'T00:00:00');
+                    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+                    const bleedingEntries = allEntries.filter(entry => {
+                        const entryStart = new Date(entry.start);
+                        const entryEnd = entry.stop && entry.duration >= 0 ? new Date(entry.stop) : new Date();
+                        return entryStart < dayStart && entryEnd > dayStart;
+                    });
+                    entriesHtml += `<div class="date-header">${formatDateWithDayOfWeek(dateKey)}</div>`;
+                    entriesHtml += renderEmptyDayMinimap(dateKey, bleedingEntries);
+                }
+            });
+            document.getElementById('timeEntriesList').innerHTML = entriesHtml;
+            attachEmptyDayListeners();
+            if (totalPages > 1) {
+                const firstDate = currentPageDates[currentPageDates.length - 1];
+                const lastDate = currentPageDates[0];
+                const dateRange = currentPageDates.length === 1 ? firstDate : `${firstDate} - ${lastDate}`;
+                document.getElementById('pagination').innerHTML = `
+                    <div class="pagination">
+                        <button class="pagination-button" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>Previous Week</button>
+                        <span class="pagination-info">${dateRange} (Week ${currentPage} of ${totalPages})</span>
+                        <button class="pagination-button" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next Week</button>
+                    </div>
+                `;
+                document.getElementById('pagination').style.display = 'flex';
+            } else {
+                document.getElementById('pagination').style.display = 'none';
+            }
+            updateRunningEntries();
+        }
+
+        function updateRunningEntries() {
+            document.querySelectorAll('.time-entry[data-running="true"]').forEach(el => {
+                const startTimeStr = el.getAttribute('data-start-time');
+                if (!startTimeStr) return;
+                const start = new Date(startTimeStr);
+                const currentDurationSeconds = Math.floor((new Date() - start) / 1000);
+                const durationHours = currentDurationSeconds / 3600;
+                const widthPercentage = Math.min((durationHours / 2) * 100, 100);
+                const durationElement = el.querySelector('.duration');
+                if (durationElement) durationElement.textContent = formatDurationFromSeconds(currentDurationSeconds);
+                el.style.setProperty('--visualization-width', `${widthPercentage}%`);
+            });
+        }
+
+        function goToPage(page) {
+            const totalPages = Math.ceil(allUniqueDates.length / 7);
+            if (page >= 1 && page <= totalPages) {
+                currentPage = page;
+                renderEntries();
+                document.getElementById('timeEntriesList').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function toggleDayEntries(dateKey) {
+            const container = document.querySelector(`.day-entries[data-date-key="${dateKey}"]`);
+            if (container) {
+                if (expandedDays.has(dateKey)) {
+                    expandedDays.delete(dateKey);
+                    container.classList.remove('expanded');
+                } else {
+                    expandedDays.add(dateKey);
+                    container.classList.add('expanded');
+                }
+            }
+        }
+
+        async function deleteTimeEntry(entryId) {
+            if (!confirm('Delete this time entry?')) return;
+            try {
+                const response = await fetch(`/api/time-entries/${entryId}`, { method: 'DELETE', headers: getApiHeaders() });
+                if (!response.ok) throw new Error('Failed');
+                allEntries = allEntries.filter(e => e.id !== entryId);
+                renderEntries();
+            } catch (error) {
+                console.error('Error deleting:', error);
+                alert('Error deleting entry.');
+            }
+        }
+
+        function editTimeEntry(entryId) {
+            const el = document.querySelector(`[data-entry-id="${entryId}"]`);
+            if (el) el.classList.add('edit-mode');
+        }
+
+        function cancelEdit(entryId) {
+            const el = document.querySelector(`[data-entry-id="${entryId}"]`);
+            if (el) el.classList.remove('edit-mode');
+        }
+
+        async function saveTimeEntry(entryId) {
+            const el = document.querySelector(`[data-entry-id="${entryId}"]`);
+            if (!el) return;
+            const startInput = el.querySelector('.start-input');
+            const endInput = el.querySelector('.end-input');
+            const startTime = startInput.value;
+            const endTime = endInput.value;
+            if (!startTime) { alert('Start time is required'); return; }
+            try {
+                const response = await fetch(`/api/time-entries/${entryId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ start_time: new Date(startTime).toISOString(), end_time: endTime ? new Date(endTime).toISOString() : null })
+                });
+                if (!response.ok) throw new Error('Failed');
+                loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error saving:', error);
+                alert('Error saving entry.');
+            }
+        }
+
+        async function extendAbove(previousEntryId, nextEntryId, gapStartTime) {
+            try {
+                await fetch(`/api/time-entries/${nextEntryId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ start_time: gapStartTime })
+                });
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error extending:', error);
+                alert('Error extending entry.');
+            }
+        }
+
+        async function extendBelow(previousEntryId, nextEntryId, gapEndTime) {
+            try {
+                await fetch(`/api/time-entries/${previousEntryId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ end_time: gapEndTime })
+                });
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error extending:', error);
+                alert('Error extending entry.');
+            }
+        }
+
+        // Minimap interactions
+        function attachEmptyDayListeners() {
+            document.querySelectorAll('.day-minimap').forEach(minimap => {
+                minimap.removeAttribute('onclick');
+                minimap.addEventListener('mousemove', handleMinimapMouseMove);
+                minimap.addEventListener('mouseleave', handleMinimapMouseLeave);
+                minimap.addEventListener('mousedown', handleMinimapMouseDown);
+            });
+            document.removeEventListener('mousemove', handleDragMove);
+            document.removeEventListener('mouseup', handleDragEnd);
+            document.addEventListener('mousemove', handleDragMove);
+            document.addEventListener('mouseup', handleDragEnd);
+        }
+
+        function getSlotFromMousePosition(minimap, mouseX) {
+            const rect = minimap.getBoundingClientRect();
+            const relativeX = mouseX - rect.left;
+            const percentage = Math.max(0, Math.min(1, relativeX / rect.width));
+            return Math.floor(percentage * 48);
+        }
+
+        function slotToTimeString(slot) {
+            const hours = Math.floor(slot / 2);
+            const minutes = (slot % 2) * 30;
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        }
+
+        function getClickedSegment(minimap, mouseX) {
+            const rect = minimap.getBoundingClientRect();
+            const percentage = ((mouseX - rect.left) / rect.width) * 100;
+            for (const segment of minimap.querySelectorAll('.minimap-segment')) {
+                const left = parseFloat(segment.style.left);
+                const width = parseFloat(segment.style.width);
+                if (percentage >= left && percentage <= left + width) return segment;
+            }
+            return null;
+        }
+
+        function handleMinimapMouseMove(e) {
+            if (isDragging) return;
+            const minimap = e.currentTarget;
+            const slot = getSlotFromMousePosition(minimap, e.clientX);
+            const hoveredSegment = getClickedSegment(minimap, e.clientX);
+            if (hoveredSegment && !hoveredSegment.classList.contains('untracked')) {
+                if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) minimap.removeChild(hoverPreviewElement);
+                hoverPreviewElement = null;
+                removeTimeIndicators(minimap);
+                minimap.style.cursor = 'pointer';
+                return;
+            }
+            minimap.style.cursor = 'crosshair';
+            if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) minimap.removeChild(hoverPreviewElement);
+            hoverPreviewElement = document.createElement('div');
+            hoverPreviewElement.className = 'hover-preview';
+            const slotWidth = 100 / 48;
+            hoverPreviewElement.style.left = `${slot * slotWidth}%`;
+            hoverPreviewElement.style.width = `${slotWidth}%`;
+            minimap.appendChild(hoverPreviewElement);
+            updateTimeIndicators(minimap, slot, slot);
+        }
+
+        function handleMinimapMouseLeave(e) {
+            if (isDragging) return;
+            const minimap = e.currentTarget;
+            if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                minimap.removeChild(hoverPreviewElement);
+                hoverPreviewElement = null;
+            }
+            removeTimeIndicators(minimap);
+        }
+
+        function handleMinimapMouseDown(e) {
+            const minimap = e.currentTarget;
+            const dateKey = minimap.getAttribute('data-date-key');
+            const clickedSegment = getClickedSegment(minimap, e.clientX);
+            if (clickedSegment && !clickedSegment.classList.contains('untracked')) {
+                toggleDayEntries(dateKey);
+                return;
+            }
+            e.preventDefault();
+            const slot = getSlotFromMousePosition(minimap, e.clientX);
+            isDragging = true;
+            dragStartSlot = slot;
+            dragEndSlot = slot;
+            dragDateKey = dateKey;
+            if (hoverPreviewElement && hoverPreviewElement.parentNode === minimap) {
+                minimap.removeChild(hoverPreviewElement);
+                hoverPreviewElement = null;
+            }
+            updateSelectionVisual(minimap);
+        }
+
+        function handleDragMove(e) {
+            if (!isDragging || !dragDateKey) return;
+            const minimap = document.querySelector(`.day-minimap[data-date-key="${dragDateKey}"]`);
+            if (!minimap) return;
+            dragEndSlot = Math.max(0, Math.min(47, getSlotFromMousePosition(minimap, e.clientX)));
+            updateSelectionVisual(minimap);
+        }
+
+        function handleDragEnd(e) {
+            if (!isDragging || !dragDateKey) return;
+            const minimap = document.querySelector(`.day-minimap[data-date-key="${dragDateKey}"]`);
+            const startSlot = Math.min(dragStartSlot, dragEndSlot);
+            const endSlot = Math.max(dragStartSlot, dragEndSlot) + 1;
+            const dateKey = dragDateKey;
+            isDragging = false;
+            dragStartSlot = null;
+            dragEndSlot = null;
+            dragDateKey = null;
+            if (minimap) {
+                const selection = minimap.querySelector('.drag-selection');
+                if (selection) minimap.removeChild(selection);
+                removeTimeIndicators(minimap);
+            }
+            const [year, month, day] = dateKey.split('-').map(Number);
+            const startDate = new Date(year, month - 1, day);
+            startDate.setMinutes(startSlot * 30);
+            const endDate = new Date(year, month - 1, day);
+            endDate.setMinutes(endSlot * 30);
+            pendingTimeRange = { startTime: startDate.toISOString(), endTime: endDate.toISOString(), dateKey };
+            showProjectModal();
+        }
+
+        function removeTimeIndicators(minimap) {
+            if (timeIndicatorStart && timeIndicatorStart.parentNode === minimap) { minimap.removeChild(timeIndicatorStart); timeIndicatorStart = null; }
+            if (timeIndicatorEnd && timeIndicatorEnd.parentNode === minimap) { minimap.removeChild(timeIndicatorEnd); timeIndicatorEnd = null; }
+        }
+
+        function updateTimeIndicators(minimap, startSlot, endSlot) {
+            const slotWidth = 100 / 48;
+            const actualStart = Math.min(startSlot, endSlot);
+            const actualEnd = Math.max(startSlot, endSlot);
+            removeTimeIndicators(minimap);
+            timeIndicatorStart = document.createElement('div');
+            timeIndicatorStart.className = 'time-indicator-start';
+            timeIndicatorStart.textContent = slotToTimeString(actualStart);
+            timeIndicatorStart.style.left = `${actualStart * slotWidth}%`;
+            minimap.appendChild(timeIndicatorStart);
+            timeIndicatorEnd = document.createElement('div');
+            timeIndicatorEnd.className = 'time-indicator-end';
+            timeIndicatorEnd.textContent = slotToTimeString(actualEnd + 1);
+            timeIndicatorEnd.style.left = `${(actualEnd + 1) * slotWidth}%`;
+            minimap.appendChild(timeIndicatorEnd);
+        }
+
+        function updateSelectionVisual(minimap) {
+            const existingSelection = minimap.querySelector('.drag-selection');
+            if (existingSelection) minimap.removeChild(existingSelection);
+            const selection = document.createElement('div');
+            selection.className = 'drag-selection';
+            const slotWidth = 100 / 48;
+            const startSlot = Math.min(dragStartSlot, dragEndSlot);
+            const endSlot = Math.max(dragStartSlot, dragEndSlot);
+            selection.style.left = `${startSlot * slotWidth}%`;
+            selection.style.width = `${(endSlot - startSlot + 1) * slotWidth}%`;
+            minimap.appendChild(selection);
+            updateTimeIndicators(minimap, dragStartSlot, dragEndSlot);
+        }
+
+        function showProjectModal() {
+            const modal = document.getElementById('projectModal');
+            const grid = document.getElementById('projectModalGrid');
+            const isPortrait = window.innerHeight > window.innerWidth;
+            const projectCount = allProjects.length;
+            if (isPortrait) {
+                grid.style.gridTemplateColumns = projectCount > 12 ? 'repeat(3, 1fr)' : 'repeat(3, 1fr)';
+                grid.style.gridTemplateRows = projectCount > 12 ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)';
+            } else {
+                grid.style.gridTemplateColumns = projectCount > 12 ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)';
+                grid.style.gridTemplateRows = 'repeat(3, 1fr)';
+            }
+            let gridHtml = '';
+            allProjects.forEach(project => {
+                const color = project.color || '#D15540';
+                gridHtml += `
+                    <div class="project-modal-item" onclick="selectProject(${project.id}, '${project.name.replace(/'/g, "\\'")}', '${color}')">
+                        <div class="project-modal-fill" style="background-color: ${color};"></div>
+                        <span class="project-modal-label">${project.name}</span>
+                    </div>
+                `;
+            });
+            grid.innerHTML = gridHtml;
+            modal.classList.add('visible');
+            document.getElementById('modalCloseBtn').onclick = hideProjectModal;
+        }
+
+        function hideProjectModal() {
+            document.getElementById('projectModal').classList.remove('visible');
+            pendingTimeRange = null;
+            pendingEntryIdForProjectChange = null;
+            document.querySelectorAll('.day-minimap').forEach(minimap => {
+                const selection = minimap.querySelector('.drag-selection');
+                if (selection) minimap.removeChild(selection);
+                removeTimeIndicators(minimap);
+            });
+        }
+
+        function getEntriesForDate(dateKey) {
+            const dayStart = new Date(dateKey + 'T00:00:00');
+            const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+            return allEntries.filter(entry => {
+                const entryStart = new Date(entry.start);
+                const entryEnd = entry.stop ? new Date(entry.stop) : new Date();
+                return entryStart < dayEnd && entryEnd > dayStart;
+            });
+        }
+
+        function adjustForOverlaps(startStr, endStr, existingEntries) {
+            let newStart = new Date(startStr);
+            let newEnd = new Date(endStr);
+            for (const entry of existingEntries) {
+                const entryStart = new Date(entry.start);
+                const entryEnd = entry.stop ? new Date(entry.stop) : new Date();
+                if (newStart < entryEnd && newEnd > entryStart) {
+                    if (entryStart <= newStart && entryEnd >= newEnd) return null;
+                    else if (entryEnd > newStart && entryEnd < newEnd) newStart = new Date(entryEnd);
+                    else if (entryStart > newStart && entryStart < newEnd) newEnd = new Date(entryStart);
+                }
+            }
+            return newStart >= newEnd ? null : { start: newStart.toISOString(), end: newEnd.toISOString() };
+        }
+
+        async function createTimeEntry(projectId, startTime, endTime) {
+            const createResponse = await fetch('/api/time-entries', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify({ project_id: projectId })
+            });
+            if (!createResponse.ok) throw new Error('Failed to create');
+            const newEntry = await createResponse.json();
+            const updateResponse = await fetch(`/api/time-entries/${newEntry.id}`, {
+                method: 'PUT',
+                headers: getApiHeaders(),
+                body: JSON.stringify({ start_time: startTime, end_time: endTime })
+            });
+            if (!updateResponse.ok) throw new Error('Failed to update');
+            return await updateResponse.json();
+        }
+
+        async function selectProject(projectId, projectName, projectColor) {
+            if (pendingEntryIdForProjectChange) {
+                try {
+                    await fetch(`/api/time-entries/${pendingEntryIdForProjectChange}`, {
+                        method: 'PUT',
+                        headers: getApiHeaders(),
+                        body: JSON.stringify({ project_id: projectId })
+                    });
+                    hideProjectModal();
+                    await loadTimeEntries(true);
+                } catch (error) {
+                    console.error('Error changing project:', error);
+                    hideProjectModal();
+                }
+                return;
+            }
+            if (!pendingTimeRange) { hideProjectModal(); return; }
+            const { startTime, endTime, dateKey } = pendingTimeRange;
+            const existingEntries = getEntriesForDate(dateKey);
+            const adjustedRange = adjustForOverlaps(startTime, endTime, existingEntries);
+            if (!adjustedRange) {
+                alert('Selected time is fully covered by existing entries.');
+                hideProjectModal();
+                return;
+            }
+            try {
+                await createTimeEntry(projectId, adjustedRange.start, adjustedRange.end);
+                hideProjectModal();
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error creating entry:', error);
+                hideProjectModal();
+            }
+        }
+
+        function changeEntryProject(entryId) {
+            pendingEntryIdForProjectChange = entryId;
+            pendingTimeRange = null;
+            showProjectModal();
+        }
+
+        async function splitTimeEntry(entryId) {
+            const entry = allEntries.find(e => e.id === entryId);
+            if (!entry || !entry.stop || entry.duration < 0) { alert('Cannot split a running entry.'); return; }
+            const startTime = new Date(entry.start);
+            const endTime = new Date(entry.stop);
+            const midTime = new Date((startTime.getTime() + endTime.getTime()) / 2);
+            try {
+                await fetch(`/api/time-entries/${entryId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ end_time: midTime.toISOString() })
+                });
+                const project = allProjects.find(p => p.name === entry.name);
+                if (!project) throw new Error('Project not found');
+                await createTimeEntry(project.id, midTime.toISOString(), endTime.toISOString());
+                await loadTimeEntries(true);
+            } catch (error) {
+                console.error('Error splitting:', error);
+                alert('Error splitting entry.');
+            }
+        }
+
+        // ============ SETTINGS PANE LOGIC ============
+        function saveApiKey() {
+            apiToken = document.getElementById('apiTokenInput').value.trim();
+            setCookie('apiToken', apiToken, 365);
+            loadProjectsList();
+            fetchProjects();
+            loadTimeEntries();
+        }
+
+        async function loadProjectsList() {
+            if (!apiToken) {
+                document.getElementById('projectsList').innerHTML = '<p>Please enter an API key first.</p>';
+                return;
+            }
+            try {
+                const response = await fetch('/api/projects?include_hidden=true', { headers: getApiHeaders() });
+                if (!response.ok) throw new Error('Failed');
+                const projectsList = await response.json();
+                const html = projectsList.map(project => {
+                    const color = project.color || '#D15540';
+                    const isVisible = project.visible !== 0 && project.visible !== null;
+                    const visibilityClass = isVisible ? '' : 'invisible';
+                    return `
+                        <div class="project-item" id="project-item-${project.id}">
+                            <div class="project-item-header">
+                                <div style="display: flex; flex-direction: column; gap: 8px;">
+                                    <span class="settings-project-name-colored" style="background-color: ${color};">${project.name}</span>
+                                    <span style="font-size: 0.95em; opacity: 0.9;">${project.target_hours} hours</span>
+                                </div>
+                                <div class="project-actions">
+                                    <button class="visibility-btn ${visibilityClass}" onclick="toggleVisibility(${project.id}, ${isVisible ? 0 : 1})" title="${isVisible ? 'Hide' : 'Show'}">
+                                        ${isVisible ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path fill-rule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 0 1 0-1.113ZM17.25 12a5.25 5.25 0 1 1-10.5 0 5.25 5.25 0 0 1 10.5 0Z" clip-rule="evenodd"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3.53 2.47a.75.75 0 0 0-1.06 1.06l18 18a.75.75 0 1 0 1.06-1.06l-18-18ZM22.676 12.553a11.249 11.249 0 0 1-2.631 4.31l-3.099-3.099a5.25 5.25 0 0 0-6.71-6.71L7.759 4.577a11.217 11.217 0 0 1 4.242-.827c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113Z"/><path d="M15.75 12c0 .18-.013.357-.037.53l-4.244-4.243A3.75 3.75 0 0 1 15.75 12ZM12.53 15.713l-4.243-4.244a3.75 3.75 0 0 0 4.244 4.243Z"/><path d="M6.75 12c0-.619.107-1.213.304-1.764l-3.1-3.1a11.25 11.25 0 0 0-2.63 4.31c-.12.362-.12.752 0 1.114 1.489 4.467 5.704 7.69 10.675 7.69 1.5 0 2.933-.294 4.242-.827l-2.477-2.477A5.25 5.25 0 0 1 6.75 12Z"/></svg>'}
+                                    </button>
+                                    <button class="settings-edit-btn" data-project-id="${project.id}" data-project-name="${project.name.replace(/"/g, '&quot;')}" data-project-hours="${project.target_hours}" title="Edit">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M21.731 2.269a2.625 2.625 0 0 0-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 0 0 0-3.712ZM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 0 0-1.32 2.214l-.8 2.685a.75.75 0 0 0 .933.933l2.685-.8a5.25 5.25 0 0 0 2.214-1.32l8.4-8.4Z"/><path d="M5.25 5.25a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3V13.5a.75.75 0 0 0-1.5 0v5.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5V8.25a1.5 1.5 0 0 1 1.5-1.5h5.25a.75.75 0 0 0 0-1.5H5.25Z"/></svg>
+                                    </button>
+                                    <button onclick="deleteProject(${project.id})" class="settings-delete-btn" title="Delete">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-.355 5.945a.75.75 0 1 0-1.5.058l.347 9a.75.75 0 1 0 1.499-.058l-.346-9Zm5.48.058a.75.75 0 1 0-1.498-.058l-.347 9a.75.75 0 0 0 1.5.058l.345-9Z" clip-rule="evenodd"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                document.getElementById('projectsList').innerHTML = html || '<p>No projects yet. Add one below.</p>';
+                document.querySelectorAll('.settings-edit-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const projectId = parseInt(this.getAttribute('data-project-id'));
+                        const projectName = this.getAttribute('data-project-name');
+                        const projectHours = parseFloat(this.getAttribute('data-project-hours'));
+                        editProjectSettings(projectId, projectName, projectHours);
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading projects:', error);
+                document.getElementById('projectsList').innerHTML = '<p style="color: red;">Error loading projects.</p>';
+            }
+        }
+
+        async function addProject() {
+            const name = document.getElementById('newProjectName').value.trim();
+            const hours = parseFloat(document.getElementById('newProjectHours').value);
+            if (!name || isNaN(hours) || hours <= 0) { alert('Please enter a valid project name and target hours.'); return; }
+            if (!apiToken) { alert('Please enter an API key first.'); return; }
+            try {
+                const response = await fetch('/api/projects', {
+                    method: 'POST',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ name, target_hours: hours })
+                });
+                if (!response.ok) throw new Error('Failed');
+                document.getElementById('newProjectName').value = '';
+                document.getElementById('newProjectHours').value = '';
+                loadProjectsList();
+                fetchProjects();
+            } catch (error) {
+                console.error('Error adding project:', error);
+                alert('Error adding project.');
+            }
+        }
+
+        function editProjectSettings(projectId, currentName, currentHours) {
+            const projectItem = document.getElementById(`project-item-${projectId}`);
+            if (!projectItem || projectItem.querySelector('.settings-edit-form')) return;
+            const editForm = document.createElement('div');
+            editForm.className = 'settings-edit-form';
+            editForm.innerHTML = `
+                <input type="text" id="edit-project-name-${projectId}" value="${currentName}" placeholder="Project name">
+                <input type="number" id="edit-project-hours-${projectId}" value="${currentHours}" placeholder="Target hours" step="0.1" min="0">
+                <div class="settings-edit-form-buttons">
+                    <button class="settings-save-btn" onclick="saveProjectSettings(${projectId})">Save</button>
+                    <button class="settings-cancel-btn" onclick="cancelEditSettings(${projectId})">Cancel</button>
+                </div>
+            `;
+            projectItem.appendChild(editForm);
+        }
+
+        function cancelEditSettings(projectId) {
+            const projectItem = document.getElementById(`project-item-${projectId}`);
+            if (!projectItem) return;
+            const editForm = projectItem.querySelector('.settings-edit-form');
+            if (editForm) editForm.remove();
+        }
+
+        async function saveProjectSettings(projectId) {
+            const nameInput = document.getElementById(`edit-project-name-${projectId}`);
+            const hoursInput = document.getElementById(`edit-project-hours-${projectId}`);
+            if (!nameInput || !hoursInput) return;
+            const name = nameInput.value.trim();
+            const hours = parseFloat(hoursInput.value);
+            if (!name || isNaN(hours) || hours <= 0) { alert('Please enter a valid project name and target hours.'); return; }
+            try {
+                const response = await fetch(`/api/projects/${projectId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ name, target_hours: hours })
+                });
+                if (!response.ok) throw new Error('Failed');
+                loadProjectsList();
+                fetchProjects();
+            } catch (error) {
+                console.error('Error updating project:', error);
+                alert('Error updating project.');
+            }
+        }
+
+        async function toggleVisibility(projectId, newVisibility) {
+            if (!apiToken) { alert('Please enter an API key first.'); return; }
+            try {
+                const getResponse = await fetch('/api/projects?include_hidden=true', { headers: getApiHeaders() });
+                if (!getResponse.ok) throw new Error('Failed');
+                const projects = await getResponse.json();
+                const project = projects.find(p => p.id === projectId);
+                if (!project) { alert('Project not found.'); return; }
+                await fetch(`/api/projects/${projectId}`, {
+                    method: 'PUT',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ name: project.name, target_hours: project.target_hours, visible: newVisibility })
+                });
+                loadProjectsList();
+                fetchProjects();
+            } catch (error) {
+                console.error('Error toggling visibility:', error);
+                alert('Error toggling visibility.');
+            }
+        }
+
+        async function deleteProject(projectId) {
+            if (!confirm('Are you sure you want to delete this project?')) return;
+            try {
+                await fetch(`/api/projects/${projectId}`, { method: 'DELETE', headers: getApiHeaders() });
+                loadProjectsList();
+                fetchProjects();
+            } catch (error) {
+                console.error('Error deleting project:', error);
+                alert('Error deleting project.');
+            }
+        }
+
+        async function randomizeColors() {
+            if (!apiToken) { alert('Please enter an API key first.'); return; }
+            try {
+                await fetch('/api/projects/randomize-colors', { method: 'POST', headers: getApiHeaders() });
+                loadProjectsList();
+                fetchProjects();
+            } catch (error) {
+                console.error('Error randomizing colors:', error);
+                alert('Error randomizing colors.');
+            }
+        }
+
+        // ============ WEBSOCKET ============
+        let ws = null;
+        let wsReconnectTimeout = null;
+
+        function connectWebSocket() {
+            if (!apiToken) return;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}?api_key=${apiToken}`);
+            ws.onopen = () => console.log('WebSocket connected');
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (error) {
+                    console.error('WebSocket parse error:', error);
+                }
+            };
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                ws = null;
+                wsReconnectTimeout = setTimeout(connectWebSocket, 2000);
+            };
+            ws.onerror = (error) => console.error('WebSocket error:', error);
+        }
+
+        function handleWebSocketMessage(message) {
+            console.log('WebSocket:', message.type);
+            switch (message.type) {
+                case 'project_created':
+                case 'project_updated':
+                case 'project_deleted':
+                case 'projects_updated':
+                    fetchProjects();
+                    loadProjectsList();
+                    loadTimeEntries(true);
+                    break;
+                case 'time_entry_started':
+                    currentTaskId = message.data.id;
+                    currentTaskName = message.data.name;
+                    currentTaskStartTime = message.data.start ? new Date(message.data.start) : new Date();
+                    if (!(message.data.name in cachedProjectTotals)) cachedProjectTotals[message.data.name] = 0;
+                    renderTotalsFromCache();
+                    updateButtonStyles(message.data.name);
+                    updateDocumentTitle();
+                    loadTimeEntries(true);
+                    break;
+                case 'time_entry_stopped':
+                    if (currentTaskId === message.data.id) {
+                        currentTaskId = null;
+                        currentTaskName = null;
+                        currentTaskStartTime = null;
+                        updateButtonStyles(null);
+                        updateDocumentTitle();
+                    }
+                    updateTotals();
+                    loadTimeEntries(true);
+                    break;
+                case 'time_entry_updated':
+                case 'time_entry_deleted':
+                    updateTotals();
+                    getCurrentTask();
+                    loadTimeEntries(true);
+                    break;
+            }
+        }
+
+        // ============ KEYBOARD NAVIGATION ============
+        window.addEventListener('keydown', function(event) {
+            // Modal handling
+            const modal = document.getElementById('projectModal');
+            if (modal && modal.classList.contains('visible')) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    hideProjectModal();
+                }
+                return;
+            }
+
+            // Arrow key pane navigation
+            if (event.key === 'ArrowLeft' && currentPane > 0) {
+                event.preventDefault();
+                scrollToPane(currentPane - 1);
+            } else if (event.key === 'ArrowRight' && currentPane < 2) {
+                event.preventDefault();
+                scrollToPane(currentPane + 1);
+            }
+
+            // Week navigation in history pane
+            if (currentPane === 0) {
+                const totalPages = Math.ceil(allUniqueDates.length / 7);
+                if (event.key === 'ArrowUp' && currentPage > 1) {
+                    event.preventDefault();
+                    goToPage(currentPage - 1);
+                } else if (event.key === 'ArrowDown' && currentPage < totalPages) {
+                    event.preventDefault();
+                    goToPage(currentPage + 1);
+                }
+            }
+        });
+
+        // ============ INITIALIZATION ============
+        document.getElementById('apiTokenInput').value = apiToken;
+
+        // Intervals
+        setInterval(() => {
+            renderTotalsFromCache();
+            if (!totalsLastUpdatedAt || (Date.now() - totalsLastUpdatedAt) >= TOTALS_REFRESH_INTERVAL_MS) {
+                updateTotals();
+            }
+        }, 60 * 1000);
+        setInterval(updateDocumentTitle, 1000);
+        setInterval(updateRunningEntries, 1000);
+
+        // Visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                getCurrentTask();
+                updateTotals();
+                loadTimeEntries(true);
+            }
+        });
+
+        // Initial load
+        if (apiToken) {
+            fetchProjects();
+            loadProjectsList();
+            loadTimeEntries();
+            connectWebSocket();
         }
     </script>
 </body>
-
 </html>

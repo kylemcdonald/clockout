@@ -173,6 +173,15 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Redirect old routes to single-page app
+app.get('/history', (req, res) => {
+    res.redirect('/');
+});
+
+app.get('/settings', (req, res) => {
+    res.redirect('/');
+});
+
 // Get current user's projects
 app.get('/api/projects', requireApiKey, (req, res) => {
     try {
