@@ -1492,7 +1492,8 @@
                     // Use current dateKey for cross-day entries so they appear in this day's list
                     const isCrossDay = entryStartDate !== dateKey;
                     const entryDateKey = isCrossDay ? dateKey : entryStartDate;
-                    if (previousEntryEndTime !== null && previousEntry !== null) {
+                    // Skip gap detection for cross-day entries - their start is on a previous day
+                    if (!isCrossDay && previousEntryEndTime !== null && previousEntry !== null) {
                         const entryStartTime = new Date(entry.start);
                         const prevEndTime = new Date(previousEntryEndTime);
                         if (Math.abs(entryStartTime.getTime() - prevEndTime.getTime()) > 1000) {
