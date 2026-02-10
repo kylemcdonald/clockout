@@ -1586,12 +1586,45 @@
             const endTime = endInput.value;
             if (!startTime) { alert('Start time is required'); return; }
             try {
+                // Find this entry and its neighbors in allEntries (sorted by start time descending)
+                const entryIndex = allEntries.findIndex(e => e.id === entryId);
+                const currentEntry = allEntries[entryIndex];
+                const previousEntry = entryIndex > 0 ? allEntries[entryIndex - 1] : null; // More recent (later in time)
+                const nextEntry = entryIndex < allEntries.length - 1 ? allEntries[entryIndex + 1] : null; // Older (earlier in time)
+
+                const newStartTime = new Date(startTime).toISOString();
+                const newEndTime = endTime ? new Date(endTime).toISOString() : null;
+                const oldStartTime = currentEntry.start;
+                const oldEndTime = currentEntry.stop;
+
+                // Update the current entry
                 const response = await fetch(`/api/time-entries/${entryId}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ start_time: new Date(startTime).toISOString(), end_time: endTime ? new Date(endTime).toISOString() : null })
+                    body: JSON.stringify({ start_time: newStartTime, end_time: newEndTime })
                 });
                 if (!response.ok) throw new Error('Failed');
+
+                // If start time changed, update the previous entry's end time (the one that ends when this one starts)
+                // nextEntry is older/earlier in time, so it's the one whose end_time should match our start_time
+                if (nextEntry && nextEntry.stop && newStartTime !== oldStartTime) {
+                    await fetch(`/api/time-entries/${nextEntry.id}`, {
+                        method: 'PUT',
+                        headers: getApiHeaders(),
+                        body: JSON.stringify({ end_time: newStartTime })
+                    });
+                }
+
+                // If end time changed, update the next entry's start time (the one that starts when this one ends)
+                // previousEntry is more recent/later in time, so it's the one whose start_time should match our end_time
+                if (previousEntry && newEndTime && newEndTime !== oldEndTime) {
+                    await fetch(`/api/time-entries/${previousEntry.id}`, {
+                        method: 'PUT',
+                        headers: getApiHeaders(),
+                        body: JSON.stringify({ start_time: newEndTime })
+                    });
+                }
+
                 loadTimeEntries(true);
             } catch (error) {
                 console.error('Error saving:', error);
