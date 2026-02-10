@@ -1451,6 +1451,26 @@
                 let allItems = [];
                 let previousEntryEndTime = null;
                 let previousEntry = null;
+
+                // Check for entries from previous days that end during this day
+                // These create potential gaps before the first entry of the current day
+                const dayStart = new Date(dateKey + 'T00:00:00');
+                const crossDayEntries = allEntries.filter(entry => {
+                    if (!entry.stop || entry.duration < 0) return false;
+                    const entryStart = new Date(entry.start);
+                    const entryEnd = new Date(entry.stop);
+                    // Entry started before day start and ends after day start
+                    return entryStart < dayStart && entryEnd > dayStart;
+                });
+
+                // Use the cross-day entry that ends latest as the initial "previousEntry"
+                if (crossDayEntries.length > 0) {
+                    crossDayEntries.sort((a, b) => new Date(b.stop) - new Date(a.stop));
+                    const latestCrossDay = crossDayEntries[0];
+                    previousEntryEndTime = latestCrossDay.stop;
+                    previousEntry = latestCrossDay;
+                }
+
                 const chronological = [...currentDayEntries].sort((a, b) => new Date(a.start) - new Date(b.start));
                 chronological.forEach(entry => {
                     const entryDateKey = formatDate(entry.start);
