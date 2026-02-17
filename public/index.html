@@ -1331,8 +1331,9 @@
             // If not provided, use the display gap times
             const actualFillStart = fillStartTime || gapStartTime;
             const actualFillEnd = fillEndTime || gapEndTime;
-            const startTime = formatTime(gapStartTime);
-            const durationSeconds = Math.floor((new Date(gapEndTime) - new Date(gapStartTime)) / 1000);
+            // Use fill times for display so cross-midnight gaps show same start time and total duration
+            const startTime = formatTime(actualFillStart);
+            const durationSeconds = Math.floor((new Date(actualFillEnd) - new Date(actualFillStart)) / 1000);
             const duration = formatDurationFromSeconds(durationSeconds);
             const durationHours = durationSeconds / 3600;
             const widthPercentage = Math.min((durationHours / 2) * 100, 100);
