@@ -1338,6 +1338,9 @@
             const durationHours = durationSeconds / 3600;
             const widthPercentage = Math.min((durationHours / 2) * 100, 100);
             const fillDateKey = formatDate(actualFillStart);
+            const gapDateKey = formatDate(gapStartTime);
+            const isPrevDay = fillDateKey !== gapDateKey;
+            const startTimeDisplay = isPrevDay ? `${startTime} (prev. day)` : startTime;
             return `
                 <div class="time-entry" style="--visualization-color: #666666; --visualization-width: ${widthPercentage}%; opacity: 0.7;">
                     <div class="time-entry-header">
@@ -1348,7 +1351,7 @@
                             <button class="extend-button" onclick="extendBelow(${previousEntryId}, ${nextEntryId}, '${gapEndTime}')">Extend Below</button>
                         </div>
                     </div>
-                    <div class="time-range">${startTime}</div>
+                    <div class="time-range">${startTimeDisplay}</div>
                 </div>
             `;
         }
