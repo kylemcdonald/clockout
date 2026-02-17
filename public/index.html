@@ -1326,17 +1326,21 @@
             `;
         }
 
-        function renderUntrackedTimeEntry(gapStartTime, gapEndTime, previousEntryId, nextEntryId) {
+        function renderUntrackedTimeEntry(gapStartTime, gapEndTime, previousEntryId, nextEntryId, fillStartTime, fillEndTime) {
+            // fillStartTime/fillEndTime are the actual times to fill when clicking (for cross-midnight gaps)
+            // If not provided, use the display gap times
+            const actualFillStart = fillStartTime || gapStartTime;
+            const actualFillEnd = fillEndTime || gapEndTime;
             const startTime = formatTime(gapStartTime);
             const durationSeconds = Math.floor((new Date(gapEndTime) - new Date(gapStartTime)) / 1000);
             const duration = formatDurationFromSeconds(durationSeconds);
             const durationHours = durationSeconds / 3600;
             const widthPercentage = Math.min((durationHours / 2) * 100, 100);
-            const dateKey = formatDate(gapStartTime);
+            const fillDateKey = formatDate(actualFillStart);
             return `
                 <div class="time-entry" style="--visualization-color: #666666; --visualization-width: ${widthPercentage}%; opacity: 0.7;">
                     <div class="time-entry-header">
-                        <span class="project-name project-name-colored" style="background-color: #666666; cursor: pointer;" onclick="fillUntrackedTime('${gapStartTime}', '${gapEndTime}', '${dateKey}')">Untracked Time</span>
+                        <span class="project-name project-name-colored" style="background-color: #666666; cursor: pointer;" onclick="fillUntrackedTime('${actualFillStart}', '${actualFillEnd}', '${fillDateKey}')">Untracked Time</span>
                         <div>
                             <span class="duration">${duration}</span>
                             <button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">Extend Above</button>
@@ -1490,8 +1494,34 @@
                         // Find the entry that ended most recently before day start
                         previousDayEntries.sort((a, b) => new Date(b.stop) - new Date(a.stop));
                         const lastPreviousEntry = previousDayEntries[0];
-                        // Use midnight as the gap start time (for this day's view)
-                        // but keep track of the actual previous entry for extend functionality
+                        const lastPreviousEntryEnd = new Date(lastPreviousEntry.stop);
+
+                        // Find the first entry of the current day to get its start time
+                        const sortedCurrentDayEntries = [...currentDayEntries].sort((a, b) => new Date(a.start) - new Date(b.start));
+                        const firstCurrentDayEntry = sortedCurrentDayEntries[0];
+                        const firstEntryStart = new Date(firstCurrentDayEntry.start);
+
+                        // Calculate midnight of the previous day (end of that day)
+                        const prevDayKey = formatDate(lastPreviousEntry.stop);
+                        const prevDayEnd = new Date(prevDayKey + 'T00:00:00');
+                        prevDayEnd.setDate(prevDayEnd.getDate() + 1); // midnight = start of next day
+
+                        // Create gap for previous day: from entry end to midnight
+                        // Only if there's actually a gap (entry didn't end exactly at midnight)
+                        if (lastPreviousEntryEnd.getTime() < prevDayEnd.getTime() - 1000) {
+                            allItems.push({
+                                type: 'gap',
+                                gapStart: lastPreviousEntry.stop,
+                                gapEnd: prevDayEnd.toISOString(),
+                                dateKey: prevDayKey,
+                                previousEntryId: lastPreviousEntry.id,
+                                nextEntryId: firstCurrentDayEntry.id,
+                                fillStart: lastPreviousEntry.stop,
+                                fillEnd: firstCurrentDayEntry.start
+                            });
+                        }
+
+                        // Set up for the current day gap (midnight to first entry)
                         previousEntryEndTime = dayStart.toISOString();
                         previousEntry = lastPreviousEntry;
                     }
@@ -1518,7 +1548,18 @@
                             // For gaps, use the current dateKey if the gap starts during this day
                             const gapStartDate = formatDate(previousEntryEndTime);
                             const gapDateKey = gapStartDate === dateKey ? dateKey : gapStartDate;
-                            allItems.push({ type: 'gap', gapStart: previousEntryEndTime, gapEnd: entry.start, dateKey: gapDateKey, previousEntryId: previousEntry.id, nextEntryId: entry.id });
+                            // For cross-midnight gaps, use actual previous entry stop time for fill
+                            const isCrossMidnightGap = gapStartDate !== formatDate(previousEntry.stop);
+                            allItems.push({
+                                type: 'gap',
+                                gapStart: previousEntryEndTime,
+                                gapEnd: entry.start,
+                                dateKey: gapDateKey,
+                                previousEntryId: previousEntry.id,
+                                nextEntryId: entry.id,
+                                fillStart: isCrossMidnightGap ? previousEntry.stop : previousEntryEndTime,
+                                fillEnd: entry.start
+                            });
                         }
                     }
                     allItems.push({ type: 'entry', entry, dateKey: entryDateKey, isCrossDay });
@@ -1542,7 +1583,7 @@
                     entriesHtml += `<div class="day-entries ${isExpanded ? 'expanded' : ''}" data-date-key="${dateKey}">`;
                     const itemsWithTransitions = itemsByDate[dateKey].map(item => ({ ...item }));
                     itemsWithTransitions.reverse().forEach(item => {
-                        if (item.type === 'gap') entriesHtml += renderUntrackedTimeEntry(item.gapStart, item.gapEnd, item.previousEntryId, item.nextEntryId);
+                        if (item.type === 'gap') entriesHtml += renderUntrackedTimeEntry(item.gapStart, item.gapEnd, item.previousEntryId, item.nextEntryId, item.fillStart, item.fillEnd);
                         else if (item.type === 'entry') entriesHtml += renderTimeEntry(item.entry, item.isCrossDay);
                     });
                     entriesHtml += `</div>`;
