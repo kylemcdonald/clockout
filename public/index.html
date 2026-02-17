@@ -1494,34 +1494,9 @@
                         // Find the entry that ended most recently before day start
                         previousDayEntries.sort((a, b) => new Date(b.stop) - new Date(a.stop));
                         const lastPreviousEntry = previousDayEntries[0];
-                        const lastPreviousEntryEnd = new Date(lastPreviousEntry.stop);
-
-                        // Find the first entry of the current day to get its start time
-                        const sortedCurrentDayEntries = [...currentDayEntries].sort((a, b) => new Date(a.start) - new Date(b.start));
-                        const firstCurrentDayEntry = sortedCurrentDayEntries[0];
-                        const firstEntryStart = new Date(firstCurrentDayEntry.start);
-
-                        // Calculate midnight of the previous day (end of that day)
-                        const prevDayKey = formatDate(lastPreviousEntry.stop);
-                        const prevDayEnd = new Date(prevDayKey + 'T00:00:00');
-                        prevDayEnd.setDate(prevDayEnd.getDate() + 1); // midnight = start of next day
-
-                        // Create gap for previous day: from entry end to midnight
-                        // Only if there's actually a gap (entry didn't end exactly at midnight)
-                        if (lastPreviousEntryEnd.getTime() < prevDayEnd.getTime() - 1000) {
-                            allItems.push({
-                                type: 'gap',
-                                gapStart: lastPreviousEntry.stop,
-                                gapEnd: prevDayEnd.toISOString(),
-                                dateKey: prevDayKey,
-                                previousEntryId: lastPreviousEntry.id,
-                                nextEntryId: firstCurrentDayEntry.id,
-                                fillStart: lastPreviousEntry.stop,
-                                fillEnd: firstCurrentDayEntry.start
-                            });
-                        }
 
                         // Set up for the current day gap (midnight to first entry)
+                        // The previous day's gap (entry end to midnight) is handled when processing that day
                         previousEntryEndTime = dayStart.toISOString();
                         previousEntry = lastPreviousEntry;
                     }
@@ -1571,6 +1546,39 @@
                         previousEntry = null;
                     }
                 });
+
+                // Check for gap at end of day: if last entry ended before midnight and there's an entry on a future day
+                if (previousEntry && previousEntryEndTime) {
+                    const lastEntryEnd = new Date(previousEntryEndTime);
+                    const dayEnd = new Date(dateKey + 'T00:00:00');
+                    dayEnd.setDate(dayEnd.getDate() + 1); // midnight = end of this day
+
+                    // Only add gap if the last entry ended before midnight (with 1 second tolerance)
+                    if (lastEntryEnd.getTime() < dayEnd.getTime() - 1000) {
+                        // Find the first entry that starts after this day's midnight
+                        const futureEntries = allEntries.filter(entry => {
+                            const entryStart = new Date(entry.start);
+                            return entryStart >= dayEnd;
+                        });
+
+                        if (futureEntries.length > 0) {
+                            futureEntries.sort((a, b) => new Date(a.start) - new Date(b.start));
+                            const nextEntry = futureEntries[0];
+
+                            allItems.push({
+                                type: 'gap',
+                                gapStart: previousEntryEndTime,
+                                gapEnd: dayEnd.toISOString(),
+                                dateKey: dateKey,
+                                previousEntryId: previousEntry.id,
+                                nextEntryId: nextEntry.id,
+                                fillStart: previousEntryEndTime,
+                                fillEnd: nextEntry.start
+                            });
+                        }
+                    }
+                }
+
                 const itemsByDate = {};
                 allItems.forEach(item => {
                     if (!itemsByDate[item.dateKey]) itemsByDate[item.dateKey] = [];
