@@ -1477,6 +1477,24 @@
                     const latestCrossDay = crossDayEntries[0];
                     previousEntryEndTime = latestCrossDay.stop;
                     previousEntry = latestCrossDay;
+                } else if (currentDayEntries.length > 0) {
+                    // No cross-day entries, but check if there's untracked time at the start of the day
+                    // Find entries that ended before this day started (on any previous day)
+                    const previousDayEntries = allEntries.filter(entry => {
+                        if (!entry.stop || entry.duration < 0) return false;
+                        const entryEnd = new Date(entry.stop);
+                        return entryEnd < dayStart;
+                    });
+
+                    if (previousDayEntries.length > 0) {
+                        // Find the entry that ended most recently before day start
+                        previousDayEntries.sort((a, b) => new Date(b.stop) - new Date(a.stop));
+                        const lastPreviousEntry = previousDayEntries[0];
+                        // Use midnight as the gap start time (for this day's view)
+                        // but keep track of the actual previous entry for extend functionality
+                        previousEntryEndTime = dayStart.toISOString();
+                        previousEntry = lastPreviousEntry;
+                    }
                 }
 
                 // Combine current day entries with cross-day entries for display
