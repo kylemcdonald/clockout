@@ -139,6 +139,30 @@ function validateApiKey(apiKey) {
     return result ? result.id : null;
 }
 
+// Helper function to clean up stale running entries (keeps only the most recent)
+function cleanupStaleRunningEntries(apiKeyId) {
+    const allRunningStmt = db.prepare(`
+        SELECT te.id, te.start_time
+        FROM time_entries te
+        WHERE te.api_key_id = ? AND te.end_time IS NULL
+        ORDER BY te.start_time DESC
+    `);
+    const runningEntries = allRunningStmt.all(apiKeyId);
+
+    if (runningEntries.length > 1) {
+        const mostRecentId = runningEntries[0].id;
+        const staleIds = runningEntries.slice(1).map(e => e.id);
+        const stopStaleStmt = db.prepare(`
+            UPDATE time_entries SET end_time = start_time
+            WHERE id IN (${staleIds.map(() => '?').join(',')}) AND end_time IS NULL
+        `);
+        stopStaleStmt.run(...staleIds);
+        console.log(`Cleaned up ${staleIds.length} stale running entries, keeping entry ${mostRecentId}`);
+        return staleIds.length;
+    }
+    return 0;
+}
+
 // Middleware to require API key authentication
 function requireApiKey(req, res, next) {
     const apiKey = getApiKey(req);
@@ -314,29 +338,20 @@ app.delete('/api/projects/:id', requireApiKey, (req, res) => {
 // Get current running time entry
 app.get('/api/time-entries/current', requireApiKey, (req, res) => {
     try {
-        // Get all running entries to check for duplicates
-        const allRunningStmt = db.prepare(`
+        // Clean up any stale running entries first
+        cleanupStaleRunningEntries(req.apiKeyId);
+
+        // Get the current running entry (should be at most one after cleanup)
+        const stmt = db.prepare(`
             SELECT te.id, te.project_id, te.start_time, p.name as project_name
             FROM time_entries te
             JOIN projects p ON te.project_id = p.id
             WHERE te.api_key_id = ? AND te.end_time IS NULL
             ORDER BY te.start_time DESC
+            LIMIT 1
         `);
-        const runningEntries = allRunningStmt.all(req.apiKeyId);
+        const entry = stmt.get(req.apiKeyId);
 
-        // If multiple running entries exist, stop all but the most recent one
-        if (runningEntries.length > 1) {
-            const mostRecentId = runningEntries[0].id;
-            const staleIds = runningEntries.slice(1).map(e => e.id);
-            const stopStaleStmt = db.prepare(`
-                UPDATE time_entries SET end_time = start_time
-                WHERE id IN (${staleIds.map(() => '?').join(',')}) AND end_time IS NULL
-            `);
-            stopStaleStmt.run(...staleIds);
-            console.log(`Cleaned up ${staleIds.length} stale running entries, keeping entry ${mostRecentId}`);
-        }
-
-        const entry = runningEntries[0];
         if (entry) {
             res.json({
                 id: entry.id,
@@ -356,6 +371,9 @@ app.get('/api/time-entries/current', requireApiKey, (req, res) => {
 // Get time entries - optionally filtered to last 168 hours
 app.get('/api/time-entries', requireApiKey, (req, res) => {
     try {
+        // Clean up any stale running entries first
+        cleanupStaleRunningEntries(req.apiKeyId);
+
         const showAll = req.query.all === 'true';
         let entries;
 
