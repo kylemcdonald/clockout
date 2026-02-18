@@ -429,10 +429,10 @@ app.get('/api/time-entries', requireApiKey, (req, res) => {
     }
 });
 
-// Start a new time entry
+// Start a new time entry (or create a completed entry if start_time and end_time provided)
 app.post('/api/time-entries', requireApiKey, (req, res) => {
     try {
-        const { project_id } = req.body;
+        const { project_id, start_time, end_time } = req.body;
         if (!project_id) {
             return res.status(400).json({ error: 'project_id is required' });
         }
@@ -442,6 +442,21 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
         const project = projectStmt.get(parseInt(project_id), req.apiKeyId);
         if (!project) {
             return res.status(404).json({ error: 'Project not found' });
+        }
+
+        // If both start_time and end_time provided, create a completed entry directly
+        if (start_time && end_time) {
+            const insertStmt = db.prepare('INSERT INTO time_entries (api_key_id, project_id, start_time, end_time) VALUES (?, ?, ?, ?)');
+            const result = insertStmt.run(req.apiKeyId, parseInt(project_id), start_time, end_time);
+            const newEntry = {
+                id: result.lastInsertRowid,
+                project_id: parseInt(project_id),
+                start: start_time,
+                stop: end_time,
+                name: project.name
+            };
+            broadcastUpdate(req.apiKey, 'time_entry_created', newEntry);
+            return res.json(newEntry);
         }
 
         // Use a transaction to atomically stop any running entries and start a new one

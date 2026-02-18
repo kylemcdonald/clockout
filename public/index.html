@@ -2020,20 +2020,13 @@
         }
 
         async function createTimeEntry(projectId, startTime, endTime) {
-            const createResponse = await fetch('/api/time-entries', {
+            const response = await fetch('/api/time-entries', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify({ project_id: projectId })
+                body: JSON.stringify({ project_id: projectId, start_time: startTime, end_time: endTime })
             });
-            if (!createResponse.ok) throw new Error('Failed to create');
-            const newEntry = await createResponse.json();
-            const updateResponse = await fetch(`/api/time-entries/${newEntry.id}`, {
-                method: 'PUT',
-                headers: getApiHeaders(),
-                body: JSON.stringify({ start_time: startTime, end_time: endTime })
-            });
-            if (!updateResponse.ok) throw new Error('Failed to update');
-            return await updateResponse.json();
+            if (!response.ok) throw new Error('Failed to create');
+            return await response.json();
         }
 
         async function selectProject(projectId, projectName, projectColor) {
@@ -2327,6 +2320,7 @@
                     updateTotals();
                     loadTimeEntries(true);
                     break;
+                case 'time_entry_created':
                 case 'time_entry_updated':
                 case 'time_entry_deleted':
                     updateTotals();
