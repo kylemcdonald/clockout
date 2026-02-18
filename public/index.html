@@ -539,6 +539,56 @@
             color: white;
         }
         .settings-container button:hover { background-color: rgba(255, 255, 255, 0.3); }
+        .settings-toggle {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1em 0;
+        }
+        .settings-toggle-label {
+            font-weight: normal;
+            margin: 0;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 28px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+            position: absolute;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.2);
+            transition: 0.2s;
+            border-radius: 28px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.2s;
+            border-radius: 50%;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #4cd964;
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
         .settings-container h3 {
             margin-top: 2em;
             margin-bottom: 1em;
@@ -674,6 +724,16 @@
                     <button id="saveApiKeyBtn" onclick="saveApiKey()" style="display: none;">Save API Key</button>
                 </div>
                 <div class="settings-section">
+                    <h3>Display</h3>
+                    <div class="settings-toggle">
+                        <span class="settings-toggle-label">Show untracked time indicator</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="showUntrackedToggle" onchange="toggleShowUntracked()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="settings-section">
                     <h3>Projects</h3>
                     <button onclick="randomizeColors()" style="margin-bottom: 1em;">Randomize Colors</button>
                     <div id="projectsList"></div>
@@ -704,6 +764,7 @@
     <script>
         // ============ SHARED STATE ============
         let apiToken = getCookie('apiToken') || '';
+        let showUntrackedIndicator = getCookie('showUntrackedIndicator') !== 'false';
         let projects = [];
         let projectColors = {};
         let currentTaskId = null;
@@ -918,11 +979,15 @@
         }
 
         function renderUntracked(totalHours) {
+            const untrackedIndicator = document.getElementById('untrackedIndicator');
+            if (!showUntrackedIndicator) {
+                untrackedIndicator.style.display = 'none';
+                return;
+            }
             const untrackedHours = Math.max(0, 168 - totalHours);
             const hours = Math.floor(untrackedHours);
             const minutes = Math.round((untrackedHours - hours) * 60);
             const untrackedText = document.getElementById('untrackedText');
-            const untrackedIndicator = document.getElementById('untrackedIndicator');
             if (untrackedHours > 1) {
                 untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
                 untrackedIndicator.style.display = 'block';
@@ -2101,6 +2166,12 @@
             loadTimeEntries();
         }
 
+        function toggleShowUntracked() {
+            showUntrackedIndicator = document.getElementById('showUntrackedToggle').checked;
+            setCookie('showUntrackedIndicator', showUntrackedIndicator, 365);
+            renderUntracked(cachedTotalHours);
+        }
+
         async function loadProjectsList() {
             if (!apiToken) {
                 document.getElementById('projectsList').innerHTML = '<p>Please enter an API key first.</p>';
@@ -2375,6 +2446,7 @@
 
         // ============ INITIALIZATION ============
         document.getElementById('apiTokenInput').value = apiToken;
+        document.getElementById('showUntrackedToggle').checked = showUntrackedIndicator;
 
         // Intervals
         setInterval(() => {
