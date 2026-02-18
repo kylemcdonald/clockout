@@ -5,7 +5,7 @@
   "main": "app.mjs",
   "scripts": {
     "start": "node app.mjs",
-    "deploy": "ssh clockout \"cd clockout && git pull\"",
+    "deploy": "git push && ssh clockout \"source ~/.nvm/nvm.sh && cd ~/clockout && git pull && npm install && pm2 restart clockout\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
