@@ -2064,7 +2064,7 @@
             try {
                 await createTimeEntry(projectId, adjustedRange.start, adjustedRange.end);
                 hideProjectModal();
-                await loadTimeEntries(true);
+                // WebSocket handler will trigger loadTimeEntries
             } catch (error) {
                 console.error('Error creating entry:', error);
                 hideProjectModal();
@@ -2092,7 +2092,7 @@
                 const project = allProjects.find(p => p.name === entry.name);
                 if (!project) throw new Error('Project not found');
                 await createTimeEntry(project.id, midTime.toISOString(), endTime.toISOString());
-                await loadTimeEntries(true);
+                // WebSocket handler will trigger loadTimeEntries
             } catch (error) {
                 console.error('Error splitting:', error);
                 alert('Error splitting entry.');
