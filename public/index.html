@@ -1341,13 +1341,17 @@
             const gapDateKey = formatDate(gapStartTime);
             const isPrevDay = fillDateKey !== gapDateKey;
             const startTimeDisplay = isPrevDay ? `${startTime} (prev. day)` : startTime;
+            // Only show "Extend Above" button if there's a next entry to extend
+            const extendAboveButton = nextEntryId !== null
+                ? `<button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">Extend Above</button>`
+                : '';
             return `
                 <div class="time-entry" style="--visualization-color: #666666; --visualization-width: ${widthPercentage}%; opacity: 0.7;">
                     <div class="time-entry-header">
                         <span class="project-name project-name-colored" style="background-color: #666666; cursor: pointer;" onclick="fillUntrackedTime('${actualFillStart}', '${actualFillEnd}', '${fillDateKey}')">Untracked Time</span>
                         <div>
                             <span class="duration">${duration}</span>
-                            <button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">Extend Above</button>
+                            ${extendAboveButton}
                             <button class="extend-button" onclick="extendBelow(${previousEntryId}, ${nextEntryId}, '${gapEndTime}')">Extend Below</button>
                         </div>
                     </div>
@@ -1580,6 +1584,25 @@
                                 fillEnd: nextEntry.start
                             });
                         }
+                    }
+                }
+
+                // Check for gap to present: if this is today and the last entry has ended, show untracked time to now
+                if (previousEntry && previousEntryEndTime && dateKey === todayDateKey) {
+                    const lastEntryEnd = new Date(previousEntryEndTime);
+                    const now = new Date();
+                    // Only add gap if there's at least 1 minute of untracked time (60 seconds)
+                    if (now.getTime() - lastEntryEnd.getTime() > 60000) {
+                        allItems.push({
+                            type: 'gap',
+                            gapStart: previousEntryEndTime,
+                            gapEnd: now.toISOString(),
+                            dateKey: dateKey,
+                            previousEntryId: previousEntry.id,
+                            nextEntryId: null,
+                            fillStart: previousEntryEndTime,
+                            fillEnd: now.toISOString()
+                        });
                     }
                 }
 
@@ -2022,7 +2045,7 @@
                         body: JSON.stringify({ project_id: projectId })
                     });
                     hideProjectModal();
-                    await loadTimeEntries(true);
+                    // WebSocket handler will trigger loadTimeEntries
                 } catch (error) {
                     console.error('Error changing project:', error);
                     hideProjectModal();
@@ -2380,9 +2403,10 @@
 
         // Initial load
         if (apiToken) {
-            fetchProjects();
+            fetchProjects().then(() => {
+                loadTimeEntries();
+            });
             loadProjectsList();
-            loadTimeEntries();
             connectWebSocket();
         }
     </script>
