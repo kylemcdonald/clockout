@@ -79,6 +79,7 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS api_keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         api_key TEXT UNIQUE NOT NULL,
+        name TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -105,6 +106,17 @@ try {
 } catch (error) {
     // Table might not exist yet, which is fine
     console.log('Note: Could not check for visible column:', error.message);
+}
+
+// Add name column to existing api_keys table if it doesn't exist
+try {
+    const tableInfo = db.prepare("PRAGMA table_info(api_keys)").all();
+    const hasNameColumn = tableInfo.some(col => col.name === 'name');
+    if (!hasNameColumn) {
+        db.exec('ALTER TABLE api_keys ADD COLUMN name TEXT');
+    }
+} catch (error) {
+    console.log('Note: Could not check for name column:', error.message);
 }
 
 db.exec(`
@@ -573,10 +585,11 @@ app.delete('/api/time-entries/:id', requireApiKey, (req, res) => {
 // Admin route: Generate new API key
 app.post('/api/admin/keys', requireAdminPassword, (req, res) => {
     try {
+        const { name } = req.body;
         const apiKey = crypto.randomBytes(32).toString('hex');
-        const stmt = db.prepare('INSERT INTO api_keys (api_key) VALUES (?)');
-        const result = stmt.run(apiKey);
-        res.json({ id: result.lastInsertRowid, api_key: apiKey });
+        const stmt = db.prepare('INSERT INTO api_keys (api_key, name) VALUES (?, ?)');
+        const result = stmt.run(apiKey, name || null);
+        res.json({ id: result.lastInsertRowid, api_key: apiKey, name: name || null });
     } catch (error) {
         console.error('Error generating API key:', error);
         res.status(500).json({ error: error.message });
@@ -586,11 +599,27 @@ app.post('/api/admin/keys', requireAdminPassword, (req, res) => {
 // Admin route: List all API keys
 app.get('/api/admin/keys', requireAdminPassword, (req, res) => {
     try {
-        const stmt = db.prepare('SELECT id, api_key, created_at FROM api_keys ORDER BY created_at DESC');
+        const stmt = db.prepare('SELECT id, api_key, name, created_at FROM api_keys ORDER BY created_at DESC');
         const keys = stmt.all();
         res.json(keys);
     } catch (error) {
         console.error('Error listing API keys:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Admin route: Update API key name
+app.put('/api/admin/keys/:id', requireAdminPassword, (req, res) => {
+    try {
+        const { name } = req.body;
+        const stmt = db.prepare('UPDATE api_keys SET name = ? WHERE id = ?');
+        const result = stmt.run(name || null, parseInt(req.params.id));
+        if (result.changes === 0) {
+            return res.status(404).json({ error: 'API key not found' });
+        }
+        res.json({ success: true, name: name || null });
+    } catch (error) {
+        console.error('Error updating API key:', error);
         res.status(500).json({ error: error.message });
     }
 });

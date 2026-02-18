@@ -117,6 +117,26 @@
         .api-key-info {
             flex: 1;
         }
+        .api-key-name {
+            font-size: 1em;
+            font-weight: 500;
+            margin-bottom: 4px;
+            color: white;
+        }
+        .api-key-name-input {
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            color: white;
+            padding: 4px 8px;
+            font-size: 1em;
+            font-weight: 500;
+            width: 200px;
+        }
+        .api-key-name-input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.5);
+        }
         .api-key-value {
             font-family: 'Courier New', monospace;
             font-size: 0.9em;
@@ -174,49 +194,31 @@
             padding: 40px;
             color: rgba(255, 255, 255, 0.6);
         }
-        .page-nav {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            z-index: 1001;
+        .api-key-actions {
             display: flex;
-            gap: 10px;
+            gap: 8px;
         }
-        .page-nav a {
-            padding: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: none;
-            border-radius: 15px;
-            background-color: rgba(255, 255, 255, 0.1);
+        .save-name-btn {
+            background-color: rgba(40, 167, 69, 0.8);
             color: white;
-            text-decoration: none;
+            border: none;
+            padding: 0.5em;
+            border-radius: 4px;
             cursor: pointer;
+            font-size: 0.9em;
+            min-width: 36px;
+            min-height: 36px;
+            display: none;
         }
-        .page-nav a:hover {
-            background-color: rgba(255, 255, 255, 0.2);
+        .save-name-btn:hover {
+            background-color: rgba(33, 136, 56, 0.9);
+        }
+        .save-name-btn.visible {
+            display: block;
         }
     </style>
 </head>
 <body>
-    <div class="page-nav">
-        <a href="/" title="Track">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
-                <path fill-rule="evenodd" d="M3 6a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3v2.25a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3V6ZM3 15.75a3 3 0 0 1 3-3h2.25a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-2.25Zm9.75 0a3 3 0 0 1 3-3H18a3 3 0 0 1 3 3V18a3 3 0 0 1-3 3h-2.25a3 3 0 0 1-3-3v-2.25Z" clip-rule="evenodd"/>
-            </svg>
-        </a>
-        <a href="/history" title="History">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
-                <path fill-rule="evenodd" d="M6.75 2.25A.75.75 0 0 1 7.5 3v1.5h9V3A.75.75 0 0 1 18 3v1.5h.75a3 3 0 0 1 3 3v11.25a3 3 0 0 1-3 3H5.25a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3H6V3a.75.75 0 0 1 .75-.75Zm13.5 9a1.5 1.5 0 0 0-1.5-1.5H5.25a1.5 1.5 0 0 0-1.5 1.5v7.5a1.5 1.5 0 0 0 1.5 1.5h13.5a1.5 1.5 0 0 0 1.5-1.5v-7.5Z" clip-rule="evenodd"/>
-            </svg>
-        </a>
-        <a href="/settings" title="Settings">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 20px; height: 20px;">
-                <path fill-rule="evenodd" d="M12 6.75a5.25 5.25 0 0 1 6.775-5.025.75.75 0 0 1 .313 1.248l-3.32 3.319c.063.475.276.934.641 1.299.365.365.824.578 1.3.64l3.318-3.319a.75.75 0 0 1 1.248.313 5.25 5.25 0 0 1-5.472 6.756c-1.018-.086-1.87.1-2.309.634L7.344 21.3A3.298 3.298 0 1 1 2.7 16.657l8.684-7.151c.533-.44.72-1.291.634-2.309A5.342 5.342 0 0 1 12 6.75ZM4.117 19.125a.75.75 0 0 1 .75-.75h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1-.75-.75v-.008Z" clip-rule="evenodd"/>
-            </svg>
-        </a>
-    </div>
     <div class="admin-container">
         <div class="admin-header">
             <h1>API Key Management</h1>
@@ -305,13 +307,18 @@
 
                 const keysHtml = keys.map(key => {
                     const createdDate = new Date(key.created_at).toLocaleString();
+                    const keyName = key.name || '';
                     return `
-                        <div class="api-key-item">
+                        <div class="api-key-item" data-key-id="${key.id}">
                             <div class="api-key-info">
+                                <input type="text" class="api-key-name-input" value="${keyName}" placeholder="Unnamed key" data-original="${keyName}" oninput="onNameChange(${key.id}, this)">
                                 <div class="api-key-value">${key.api_key}</div>
                                 <div class="api-key-date">Created: ${createdDate}</div>
                             </div>
-                            <button class="delete-key-btn" onclick="deleteApiKey(${key.id})">Delete</button>
+                            <div class="api-key-actions">
+                                <button class="save-name-btn" id="save-btn-${key.id}" onclick="saveKeyName(${key.id})">Save</button>
+                                <button class="delete-key-btn" onclick="deleteApiKey(${key.id})">Delete</button>
+                            </div>
                         </div>
                     `;
                 }).join('');
@@ -373,6 +380,44 @@
                 loadApiKeys();
             } catch (error) {
                 console.error('Error deleting API key:', error);
+                showError(error.message);
+            }
+        }
+
+        function onNameChange(keyId, input) {
+            const saveBtn = document.getElementById(`save-btn-${keyId}`);
+            if (input.value !== input.dataset.original) {
+                saveBtn.classList.add('visible');
+            } else {
+                saveBtn.classList.remove('visible');
+            }
+        }
+
+        async function saveKeyName(keyId) {
+            const item = document.querySelector(`[data-key-id="${keyId}"]`);
+            const input = item.querySelector('.api-key-name-input');
+            const newName = input.value.trim();
+
+            try {
+                const response = await fetch(`/api/admin/keys/${keyId}`, {
+                    method: 'PUT',
+                    headers: getAdminHeaders(),
+                    body: JSON.stringify({ name: newName || null })
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Invalid password');
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to update API key name');
+                }
+
+                input.dataset.original = newName;
+                document.getElementById(`save-btn-${keyId}`).classList.remove('visible');
+                showSuccess('API key name updated.');
+            } catch (error) {
+                console.error('Error updating API key name:', error);
                 showError(error.message);
             }
         }
