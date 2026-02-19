@@ -730,6 +730,9 @@
                 <div class="settings-header">
                     <h1>Settings</h1>
                 </div>
+                <p id="welcomeMessage" class="welcome-message" style="display: none; color: rgba(255,255,255,0.7); margin-bottom: 20px; line-height: 1.5;">
+                    Welcome! Add your API key and some projects below, then swipe left to start tracking time.
+                </p>
                 <div class="settings-section">
                     <label>API Key:</label>
                     <input type="password" id="apiTokenInput" placeholder="Enter your API key" onclick="this.type='text'" oninput="document.getElementById('saveApiKeyBtn').style.display='inline-block'">
@@ -776,7 +779,7 @@
     <script>
         // ============ SHARED STATE ============
         let apiToken = getCookie('apiToken') || '';
-        let showUntrackedIndicator = getCookie('showUntrackedIndicator') !== 'false';
+        let showUntrackedIndicator = getCookie('showUntrackedIndicator') === 'true';
         let projects = [];
         let projectColors = {};
         let currentTaskId = null;
@@ -879,13 +882,26 @@
             updatePageIndicator();
         });
 
-        // Scroll to center pane (Track) on load - use instant to avoid animation
+        // Scroll to appropriate pane on load - Settings if no API key, Track otherwise
+        function getInitialPane() {
+            return apiToken ? 1 : 2; // Track (1) if API key exists, Settings (2) otherwise
+        }
+
         window.addEventListener('load', () => {
-            scrollToPane(1, true);
+            scrollToPane(getInitialPane(), true);
         });
 
         // Also set initial position immediately (backup for load event)
-        setTimeout(() => scrollToPane(1, true), 0);
+        setTimeout(() => scrollToPane(getInitialPane(), true), 0);
+
+        // Show welcome message if no API key
+        function updateWelcomeMessage() {
+            const welcomeEl = document.getElementById('welcomeMessage');
+            if (welcomeEl) {
+                welcomeEl.style.display = apiToken ? 'none' : 'block';
+            }
+        }
+        updateWelcomeMessage();
 
         // ============ UTILITY FUNCTIONS ============
         function getCookie(name) {
@@ -2304,6 +2320,7 @@
             const previousApiToken = apiToken;
             apiToken = document.getElementById('apiTokenInput').value.trim();
             setCookie('apiToken', apiToken, 365);
+            updateWelcomeMessage();
             projectsRequestSeq++;
             currentTaskRequestSeq++;
             timeEntriesRequestSeq++;
