@@ -2318,8 +2318,11 @@
         // ============ SETTINGS PANE LOGIC ============
         function saveApiKey() {
             const previousApiToken = apiToken;
-            apiToken = document.getElementById('apiTokenInput').value.trim();
+            const inputEl = document.getElementById('apiTokenInput');
+            apiToken = inputEl.value.trim();
             setCookie('apiToken', apiToken, 365);
+            inputEl.type = 'password';
+            document.getElementById('saveApiKeyBtn').style.display = 'none';
             updateWelcomeMessage();
             projectsRequestSeq++;
             currentTaskRequestSeq++;
