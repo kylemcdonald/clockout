@@ -73,6 +73,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Initialize SQLite database
 const db = new Database('clockout.db');
+db.pragma('foreign_keys = ON');
 
 // Create tables if they don't exist
 db.exec(`
@@ -132,13 +133,58 @@ db.exec(`
     );
 `);
 
+// Reconcile historical data where multiple running entries exist for one API key.
+// Keep the newest running entry and close older ones at the newest start_time.
+function reconcileRunningEntriesForConstraints() {
+    const rows = db.prepare(`
+        SELECT id, api_key_id, start_time
+        FROM time_entries
+        WHERE end_time IS NULL
+        ORDER BY api_key_id, start_time DESC, id DESC
+    `).all();
+
+    const rowsByApiKey = new Map();
+    rows.forEach(row => {
+        if (!rowsByApiKey.has(row.api_key_id)) {
+            rowsByApiKey.set(row.api_key_id, []);
+        }
+        rowsByApiKey.get(row.api_key_id).push(row);
+    });
+
+    const reconcile = db.transaction(() => {
+        let closedCount = 0;
+        const closeStmt = db.prepare('UPDATE time_entries SET end_time = ? WHERE id = ? AND end_time IS NULL');
+        for (const [, runningEntries] of rowsByApiKey.entries()) {
+            if (runningEntries.length <= 1) continue;
+            const newest = runningEntries[0];
+            for (const stale of runningEntries.slice(1)) {
+                closeStmt.run(newest.start_time, stale.id);
+                closedCount += 1;
+            }
+        }
+        return closedCount;
+    });
+
+    const closed = reconcile();
+    if (closed > 0) {
+        console.warn(`Reconciled ${closed} stale running time entries before applying unique running-entry constraint.`);
+    }
+}
+
+reconcileRunningEntriesForConstraints();
+db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_time_entries_one_running_per_api_key
+    ON time_entries(api_key_id)
+    WHERE end_time IS NULL
+`);
+
 // Helper function to get API key from request
 function getApiKey(req) {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         return authHeader.substring(7);
     }
-    return req.headers['x-api-key'] || req.query.api_key || req.body.api_key;
+    return req.headers['x-api-key'] || req.query.api_key || req.body?.api_key;
 }
 
 // Helper function to validate API key
@@ -149,30 +195,6 @@ function validateApiKey(apiKey) {
     const stmt = db.prepare('SELECT id FROM api_keys WHERE api_key = ?');
     const result = stmt.get(apiKey);
     return result ? result.id : null;
-}
-
-// Helper function to clean up stale running entries (keeps only the most recent)
-function cleanupStaleRunningEntries(apiKeyId) {
-    const allRunningStmt = db.prepare(`
-        SELECT te.id, te.start_time
-        FROM time_entries te
-        WHERE te.api_key_id = ? AND te.end_time IS NULL
-        ORDER BY te.start_time DESC
-    `);
-    const runningEntries = allRunningStmt.all(apiKeyId);
-
-    if (runningEntries.length > 1) {
-        const mostRecentId = runningEntries[0].id;
-        const staleIds = runningEntries.slice(1).map(e => e.id);
-        const stopStaleStmt = db.prepare(`
-            UPDATE time_entries SET end_time = start_time
-            WHERE id IN (${staleIds.map(() => '?').join(',')}) AND end_time IS NULL
-        `);
-        stopStaleStmt.run(...staleIds);
-        console.log(`Cleaned up ${staleIds.length} stale running entries, keeping entry ${mostRecentId}`);
-        return staleIds.length;
-    }
-    return 0;
 }
 
 // Middleware to require API key authentication
@@ -243,13 +265,17 @@ app.post('/api/projects', requireApiKey, (req, res) => {
         if (!name || target_hours === undefined) {
             return res.status(400).json({ error: 'Name and target_hours are required' });
         }
+        const targetHours = parseFloat(target_hours);
+        if (!Number.isFinite(targetHours) || targetHours <= 0) {
+            return res.status(400).json({ error: 'target_hours must be a positive number' });
+        }
         
         const colors = ['#f94144', '#f3722c', '#f8961e', '#f9844a', '#f9c74f', '#90be6d', '#43aa8b', '#4d908e', '#577590', '#277da1'];
         const projectColor = color || colors[Math.floor(Math.random() * colors.length)];
         
         const stmt = db.prepare('INSERT INTO projects (api_key_id, name, target_hours, color) VALUES (?, ?, ?, ?)');
-        const result = stmt.run(req.apiKeyId, name, parseFloat(target_hours), projectColor);
-        const newProject = { id: result.lastInsertRowid, name, target_hours: parseFloat(target_hours), color: projectColor, visible: 1 };
+        const result = stmt.run(req.apiKeyId, name, targetHours, projectColor);
+        const newProject = { id: result.lastInsertRowid, name, target_hours: targetHours, color: projectColor, visible: 1 };
         broadcastUpdate(req.apiKey, 'project_created', newProject);
         res.json(newProject);
     } catch (error) {
@@ -264,13 +290,21 @@ app.post('/api/projects', requireApiKey, (req, res) => {
 // Update a project
 app.put('/api/projects/:id', requireApiKey, (req, res) => {
     try {
+        const projectId = parseInt(req.params.id);
+        if (!Number.isInteger(projectId)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
         const { name, target_hours, visible } = req.body;
         if (!name || target_hours === undefined) {
             return res.status(400).json({ error: 'Name and target_hours are required' });
         }
+        const targetHours = parseFloat(target_hours);
+        if (!Number.isFinite(targetHours) || targetHours <= 0) {
+            return res.status(400).json({ error: 'target_hours must be a positive number' });
+        }
         
         let query = 'UPDATE projects SET name = ?, target_hours = ?';
-        const params = [name, parseFloat(target_hours)];
+        const params = [name, targetHours];
         
         if (visible !== undefined) {
             query += ', visible = ?';
@@ -278,7 +312,7 @@ app.put('/api/projects/:id', requireApiKey, (req, res) => {
         }
         
         query += ' WHERE id = ? AND api_key_id = ?';
-        params.push(parseInt(req.params.id), req.apiKeyId);
+        params.push(projectId, req.apiKeyId);
         
         const stmt = db.prepare(query);
         const result = stmt.run(...params);
@@ -288,7 +322,7 @@ app.put('/api/projects/:id', requireApiKey, (req, res) => {
         
         // Fetch updated project
         const getStmt = db.prepare('SELECT id, name, target_hours, color, visible FROM projects WHERE id = ?');
-        const project = getStmt.get(parseInt(req.params.id));
+        const project = getStmt.get(projectId);
         broadcastUpdate(req.apiKey, 'project_updated', project);
         res.json(project);
     } catch (error) {
@@ -334,6 +368,9 @@ app.post('/api/projects/randomize-colors', requireApiKey, (req, res) => {
 app.delete('/api/projects/:id', requireApiKey, (req, res) => {
     try {
         const projectId = parseInt(req.params.id);
+        if (!Number.isInteger(projectId)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
         const stmt = db.prepare('DELETE FROM projects WHERE id = ? AND api_key_id = ?');
         const result = stmt.run(projectId, req.apiKeyId);
         if (result.changes === 0) {
@@ -350,10 +387,7 @@ app.delete('/api/projects/:id', requireApiKey, (req, res) => {
 // Get current running time entry
 app.get('/api/time-entries/current', requireApiKey, (req, res) => {
     try {
-        // Clean up any stale running entries first
-        cleanupStaleRunningEntries(req.apiKeyId);
-
-        // Get the current running entry (should be at most one after cleanup)
+        // Get the current running entry
         const stmt = db.prepare(`
             SELECT te.id, te.project_id, te.start_time, p.name as project_name
             FROM time_entries te
@@ -383,9 +417,6 @@ app.get('/api/time-entries/current', requireApiKey, (req, res) => {
 // Get time entries - optionally filtered to last 168 hours
 app.get('/api/time-entries', requireApiKey, (req, res) => {
     try {
-        // Clean up any stale running entries first
-        cleanupStaleRunningEntries(req.apiKeyId);
-
         const showAll = req.query.all === 'true';
         let entries;
 
@@ -436,23 +467,37 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
         if (!project_id) {
             return res.status(400).json({ error: 'project_id is required' });
         }
+        const projectId = parseInt(project_id);
+        if (!Number.isInteger(projectId)) {
+            return res.status(400).json({ error: 'project_id must be a valid integer' });
+        }
 
         // Verify project belongs to this API key
         const projectStmt = db.prepare('SELECT id, name FROM projects WHERE id = ? AND api_key_id = ?');
-        const project = projectStmt.get(parseInt(project_id), req.apiKeyId);
+        const project = projectStmt.get(projectId, req.apiKeyId);
         if (!project) {
             return res.status(404).json({ error: 'Project not found' });
         }
 
         // If both start_time and end_time provided, create a completed entry directly
         if (start_time && end_time) {
+            const startDate = new Date(start_time);
+            const endDate = new Date(end_time);
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                return res.status(400).json({ error: 'start_time and end_time must be valid ISO date strings' });
+            }
+            if (startDate >= endDate) {
+                return res.status(400).json({ error: 'start_time must be before end_time' });
+            }
             const insertStmt = db.prepare('INSERT INTO time_entries (api_key_id, project_id, start_time, end_time) VALUES (?, ?, ?, ?)');
-            const result = insertStmt.run(req.apiKeyId, parseInt(project_id), start_time, end_time);
+            const normalizedStart = startDate.toISOString();
+            const normalizedEnd = endDate.toISOString();
+            const result = insertStmt.run(req.apiKeyId, projectId, normalizedStart, normalizedEnd);
             const newEntry = {
                 id: result.lastInsertRowid,
-                project_id: parseInt(project_id),
-                start: start_time,
-                stop: end_time,
+                project_id: projectId,
+                start: normalizedStart,
+                stop: normalizedEnd,
                 name: project.name
             };
             broadcastUpdate(req.apiKey, 'time_entry_created', newEntry);
@@ -473,11 +518,11 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
             return result.lastInsertRowid;
         });
 
-        const newEntryId = startNewEntry(req.apiKeyId, parseInt(project_id), startTime);
+        const newEntryId = startNewEntry(req.apiKeyId, projectId, startTime);
 
         const newEntry = {
             id: newEntryId,
-            project_id: parseInt(project_id),
+            project_id: projectId,
             start: startTime,
             stop: null,
             name: project.name
@@ -485,6 +530,9 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
         broadcastUpdate(req.apiKey, 'time_entry_started', newEntry);
         res.json(newEntry);
     } catch (error) {
+        if (error.message.includes('idx_time_entries_one_running_per_api_key')) {
+            return res.status(409).json({ error: 'Another running entry already exists for this API key' });
+        }
         console.error('Error starting time entry:', error);
         res.status(500).json({ error: error.message });
     }
@@ -494,6 +542,9 @@ app.post('/api/time-entries', requireApiKey, (req, res) => {
 app.patch('/api/time-entries/:id/stop', requireApiKey, (req, res) => {
     try {
         const entryId = parseInt(req.params.id);
+        if (!Number.isInteger(entryId)) {
+            return res.status(400).json({ error: 'Invalid time entry id' });
+        }
         const endTime = new Date().toISOString();
         const stmt = db.prepare('UPDATE time_entries SET end_time = ? WHERE id = ? AND api_key_id = ? AND end_time IS NULL');
         const result = stmt.run(endTime, entryId, req.apiKeyId);
@@ -512,16 +563,31 @@ app.patch('/api/time-entries/:id/stop', requireApiKey, (req, res) => {
 app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
     try {
         const { start_time, end_time, project_id } = req.body;
+        const entryId = parseInt(req.params.id);
+        if (!Number.isInteger(entryId)) {
+            return res.status(400).json({ error: 'Invalid time entry id' });
+        }
 
         // Validate input
         if (!start_time && end_time === undefined && !project_id) {
             return res.status(400).json({ error: 'Either start_time, end_time, or project_id must be provided' });
         }
 
+        const existingStmt = db.prepare('SELECT id, project_id, start_time, end_time FROM time_entries WHERE id = ? AND api_key_id = ?');
+        const existingEntry = existingStmt.get(entryId, req.apiKeyId);
+        if (!existingEntry) {
+            return res.status(404).json({ error: 'Time entry not found' });
+        }
+
+        const parsedProjectId = project_id ? parseInt(project_id) : null;
+        if (project_id && !Number.isInteger(parsedProjectId)) {
+            return res.status(400).json({ error: 'project_id must be a valid integer' });
+        }
+
         // Validate project_id if provided
         if (project_id) {
             const projectStmt = db.prepare('SELECT id FROM projects WHERE id = ? AND api_key_id = ?');
-            const project = projectStmt.get(parseInt(project_id), req.apiKeyId);
+            const project = projectStmt.get(parsedProjectId, req.apiKeyId);
             if (!project) {
                 return res.status(404).json({ error: 'Project not found' });
             }
@@ -540,9 +606,26 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
         const validatedStartTime = start_time ? validateDate(start_time, 'start_time') : null;
         const validatedEndTime = end_time !== undefined ? (end_time ? validateDate(end_time, 'end_time') : null) : undefined;
 
-        // If both start and end are provided, ensure start is before end
-        if (validatedStartTime && validatedEndTime && new Date(validatedStartTime) >= new Date(validatedEndTime)) {
+        const finalStartTime = validatedStartTime ?? existingEntry.start_time;
+        const finalEndTime = validatedEndTime !== undefined ? validatedEndTime : existingEntry.end_time;
+
+        // Ensure start is before end when end exists
+        if (finalEndTime && new Date(finalStartTime) >= new Date(finalEndTime)) {
             return res.status(400).json({ error: 'start_time must be before end_time' });
+        }
+
+        // Prevent multiple running entries for one API key when reopening an entry
+        if (finalEndTime === null) {
+            const otherRunningStmt = db.prepare(`
+                SELECT id
+                FROM time_entries
+                WHERE api_key_id = ? AND end_time IS NULL AND id != ?
+                LIMIT 1
+            `);
+            const otherRunning = otherRunningStmt.get(req.apiKeyId, entryId);
+            if (otherRunning) {
+                return res.status(409).json({ error: 'Another running entry already exists for this API key' });
+            }
         }
 
         // Build update query dynamically
@@ -558,11 +641,11 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
         }
         if (project_id) {
             updates.push('project_id = ?');
-            params.push(parseInt(project_id));
+            params.push(parsedProjectId);
         }
 
         // Add WHERE conditions
-        params.push(parseInt(req.params.id), req.apiKeyId);
+        params.push(entryId, req.apiKeyId);
 
         const stmt = db.prepare(`UPDATE time_entries SET ${updates.join(', ')} WHERE id = ? AND api_key_id = ?`);
         const result = stmt.run(...params);
@@ -571,11 +654,183 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
             return res.status(404).json({ error: 'Time entry not found' });
         }
 
-        const entryId = parseInt(req.params.id);
         broadcastUpdate(req.apiKey, 'time_entry_updated', { id: entryId, start_time: validatedStartTime, end_time: validatedEndTime });
         res.json({ success: true });
     } catch (error) {
+        if (error.message.includes('idx_time_entries_one_running_per_api_key')) {
+            return res.status(409).json({ error: 'Another running entry already exists for this API key' });
+        }
         console.error('Error updating time entry:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Shift an entry start backward and optionally shift a linked entry end backward in one transaction
+app.patch('/api/time-entries/:id/shift-start', requireApiKey, (req, res) => {
+    try {
+        const entryId = parseInt(req.params.id);
+        const minutes = Number(req.body.minutes);
+        const hasPreviousEntryId = req.body.previous_entry_id !== undefined && req.body.previous_entry_id !== null && req.body.previous_entry_id !== '';
+        const previousEntryId = hasPreviousEntryId ? parseInt(req.body.previous_entry_id) : null;
+
+        if (!Number.isInteger(entryId)) {
+            return res.status(400).json({ error: 'Invalid time entry id' });
+        }
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+            return res.status(400).json({ error: 'minutes must be a positive number' });
+        }
+        if (hasPreviousEntryId && !Number.isInteger(previousEntryId)) {
+            return res.status(400).json({ error: 'previous_entry_id must be a valid integer' });
+        }
+
+        const shiftMs = Math.round(minutes * 60 * 1000);
+        const applyShift = db.transaction(() => {
+            const getEntry = db.prepare('SELECT id, start_time, end_time FROM time_entries WHERE id = ? AND api_key_id = ?');
+            const current = getEntry.get(entryId, req.apiKeyId);
+            if (!current) {
+                return { error: { code: 404, message: 'Time entry not found' } };
+            }
+
+            const oldStart = new Date(current.start_time);
+            if (isNaN(oldStart.getTime())) {
+                return { error: { code: 500, message: 'Existing start_time is invalid' } };
+            }
+            const newStart = new Date(oldStart.getTime() - shiftMs).toISOString();
+            if (current.end_time && new Date(newStart) >= new Date(current.end_time)) {
+                return { error: { code: 400, message: 'Shift would make start_time >= end_time' } };
+            }
+
+            if (previousEntryId) {
+                const previous = getEntry.get(previousEntryId, req.apiKeyId);
+                if (!previous) {
+                    return { error: { code: 404, message: 'Linked previous entry not found' } };
+                }
+                if (!previous.end_time) {
+                    return { error: { code: 400, message: 'Linked previous entry must be completed' } };
+                }
+                const previousEnd = new Date(previous.end_time);
+                const newPreviousEnd = new Date(previousEnd.getTime() - shiftMs).toISOString();
+                if (new Date(previous.start_time) >= new Date(newPreviousEnd)) {
+                    return { error: { code: 400, message: 'Shift would make linked previous entry invalid' } };
+                }
+                db.prepare('UPDATE time_entries SET end_time = ? WHERE id = ? AND api_key_id = ?')
+                    .run(newPreviousEnd, previousEntryId, req.apiKeyId);
+            }
+
+            db.prepare('UPDATE time_entries SET start_time = ? WHERE id = ? AND api_key_id = ?')
+                .run(newStart, entryId, req.apiKeyId);
+
+            return { newStart };
+        });
+
+        const result = applyShift();
+        if (result.error) {
+            return res.status(result.error.code).json({ error: result.error.message });
+        }
+
+        broadcastUpdate(req.apiKey, 'time_entry_updated', { id: entryId, start_time: result.newStart });
+        if (previousEntryId) {
+            broadcastUpdate(req.apiKey, 'time_entry_updated', { id: previousEntryId });
+        }
+        res.json({ success: true, start_time: result.newStart });
+    } catch (error) {
+        console.error('Error shifting time entry start:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update an entry and optionally linked neighboring boundaries in one transaction
+app.put('/api/time-entries/:id/edit-linked', requireApiKey, (req, res) => {
+    try {
+        const entryId = parseInt(req.params.id);
+        const { start_time, end_time, next_entry_id, previous_entry_id } = req.body;
+        const hasNextEntryId = next_entry_id !== undefined && next_entry_id !== null && next_entry_id !== '';
+        const hasPreviousEntryId = previous_entry_id !== undefined && previous_entry_id !== null && previous_entry_id !== '';
+        const nextEntryId = hasNextEntryId ? parseInt(next_entry_id) : null;
+        const previousEntryId = hasPreviousEntryId ? parseInt(previous_entry_id) : null;
+
+        if (!Number.isInteger(entryId)) {
+            return res.status(400).json({ error: 'Invalid time entry id' });
+        }
+        if (!start_time) {
+            return res.status(400).json({ error: 'start_time is required' });
+        }
+        if (hasNextEntryId && !Number.isInteger(nextEntryId)) {
+            return res.status(400).json({ error: 'next_entry_id must be a valid integer' });
+        }
+        if (hasPreviousEntryId && !Number.isInteger(previousEntryId)) {
+            return res.status(400).json({ error: 'previous_entry_id must be a valid integer' });
+        }
+
+        const newStart = new Date(start_time);
+        const newEnd = end_time ? new Date(end_time) : null;
+        if (isNaN(newStart.getTime()) || (end_time && (!newEnd || isNaN(newEnd.getTime())))) {
+            return res.status(400).json({ error: 'start_time/end_time must be valid ISO date strings' });
+        }
+        if (newEnd && newStart >= newEnd) {
+            return res.status(400).json({ error: 'start_time must be before end_time' });
+        }
+
+        const applyEdit = db.transaction(() => {
+            const getEntry = db.prepare('SELECT id, start_time, end_time FROM time_entries WHERE id = ? AND api_key_id = ?');
+            const current = getEntry.get(entryId, req.apiKeyId);
+            if (!current) {
+                return { error: { code: 404, message: 'Time entry not found' } };
+            }
+
+            const normalizedStart = newStart.toISOString();
+            const normalizedEnd = newEnd ? newEnd.toISOString() : null;
+            const startChanged = normalizedStart !== current.start_time;
+            const endChanged = normalizedEnd !== current.end_time;
+
+            if (nextEntryId && startChanged) {
+                const nextEntry = getEntry.get(nextEntryId, req.apiKeyId);
+                if (!nextEntry) {
+                    return { error: { code: 404, message: 'Linked next entry not found' } };
+                }
+                if (new Date(nextEntry.start_time) >= newStart) {
+                    return { error: { code: 400, message: 'Linked next entry would become invalid' } };
+                }
+                db.prepare('UPDATE time_entries SET end_time = ? WHERE id = ? AND api_key_id = ?')
+                    .run(normalizedStart, nextEntryId, req.apiKeyId);
+            }
+
+            if (previousEntryId && endChanged && normalizedEnd) {
+                const previousEntry = getEntry.get(previousEntryId, req.apiKeyId);
+                if (!previousEntry) {
+                    return { error: { code: 404, message: 'Linked previous entry not found' } };
+                }
+                if (!previousEntry.end_time) {
+                    return { error: { code: 400, message: 'Linked previous entry must be completed' } };
+                }
+                if (newEnd >= new Date(previousEntry.end_time)) {
+                    return { error: { code: 400, message: 'Linked previous entry would become invalid' } };
+                }
+                db.prepare('UPDATE time_entries SET start_time = ? WHERE id = ? AND api_key_id = ?')
+                    .run(normalizedEnd, previousEntryId, req.apiKeyId);
+            }
+
+            db.prepare('UPDATE time_entries SET start_time = ?, end_time = ? WHERE id = ? AND api_key_id = ?')
+                .run(normalizedStart, normalizedEnd, entryId, req.apiKeyId);
+
+            return { normalizedStart, normalizedEnd };
+        });
+
+        const result = applyEdit();
+        if (result.error) {
+            return res.status(result.error.code).json({ error: result.error.message });
+        }
+
+        broadcastUpdate(req.apiKey, 'time_entry_updated', { id: entryId, start_time: result.normalizedStart, end_time: result.normalizedEnd });
+        if (nextEntryId) {
+            broadcastUpdate(req.apiKey, 'time_entry_updated', { id: nextEntryId });
+        }
+        if (previousEntryId) {
+            broadcastUpdate(req.apiKey, 'time_entry_updated', { id: previousEntryId });
+        }
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating linked time entries:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -584,6 +839,9 @@ app.put('/api/time-entries/:id', requireApiKey, (req, res) => {
 app.delete('/api/time-entries/:id', requireApiKey, (req, res) => {
     try {
         const entryId = parseInt(req.params.id);
+        if (!Number.isInteger(entryId)) {
+            return res.status(400).json({ error: 'Invalid time entry id' });
+        }
         const stmt = db.prepare('DELETE FROM time_entries WHERE id = ? AND api_key_id = ?');
         const result = stmt.run(entryId, req.apiKeyId);
         if (result.changes === 0) {
@@ -652,16 +910,6 @@ app.delete('/api/admin/keys/:id', requireAdminPassword, (req, res) => {
         console.error('Error deleting API key:', error);
         res.status(500).json({ error: error.message });
     }
-});
-
-// History route - serve HTML page
-app.get('/history', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'history.html'));
-});
-
-// Settings route - serve HTML page
-app.get('/settings', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'settings.html'));
 });
 
 // Admin route - serve HTML page

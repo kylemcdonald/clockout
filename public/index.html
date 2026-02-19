@@ -788,6 +788,10 @@
         let totalsLastUpdatedAt = null;
         let currentTaskElapsedAtLastUpdateHours = 0;
         let totalsUpdateInFlight = false;
+        let totalsRefreshRequested = false;
+        let projectsRequestSeq = 0;
+        let currentTaskRequestSeq = 0;
+        let timeEntriesRequestSeq = 0;
         const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
         const DEFAULT_TITLE = 'Clock-Out';
 
@@ -1032,13 +1036,17 @@
         async function fetchProjects() {
             if (!apiToken) {
                 projects = [];
+                allProjects = [];
+                projectColors = {};
                 generateTaskContainers();
                 return;
             }
+            const requestSeq = ++projectsRequestSeq;
             try {
                 const response = await fetch('/api/projects', { headers: getApiHeaders() });
                 if (!response.ok) throw new Error('Failed to fetch');
                 const data = await response.json();
+                if (requestSeq !== projectsRequestSeq) return;
                 projects = data.map(p => ({
                     id: p.id,
                     name: p.name,
@@ -1049,10 +1057,14 @@
                 data.forEach(p => { projectColors[p.name] = p.color || '#D15540'; });
                 allProjects = data;
                 generateTaskContainers();
-                getCurrentTask().then(() => updateTotals());
+                await getCurrentTask();
+                await updateTotals();
             } catch (error) {
+                if (requestSeq !== projectsRequestSeq) return;
                 console.error('Error fetching projects:', error);
                 projects = [];
+                allProjects = [];
+                projectColors = {};
                 generateTaskContainers();
             }
         }
@@ -1096,6 +1108,7 @@
         }
 
         async function getCurrentTask() {
+            const requestSeq = ++currentTaskRequestSeq;
             if (!apiToken) {
                 currentTaskId = null;
                 currentTaskName = null;
@@ -1109,6 +1122,7 @@
                 const response = await fetch('/api/time-entries/current', { headers: getApiHeaders() });
                 if (!response.ok) throw new Error('Failed');
                 const data = await response.json();
+                if (requestSeq !== currentTaskRequestSeq) return;
                 if (data && data.id) {
                     currentTaskId = data.id;
                     currentTaskName = data.name;
@@ -1129,6 +1143,7 @@
                 renderTotalsFromCache();
                 updateDocumentTitle();
             } catch (error) {
+                if (requestSeq !== currentTaskRequestSeq) return;
                 console.error('Error getting current task:', error);
                 currentTaskId = null;
                 currentTaskName = null;
@@ -1140,8 +1155,13 @@
         }
 
         async function updateTotals() {
-            if (totalsUpdateInFlight || !apiToken) return;
+            if (!apiToken) return;
+            if (totalsUpdateInFlight) {
+                totalsRefreshRequested = true;
+                return;
+            }
             totalsUpdateInFlight = true;
+            totalsRefreshRequested = false;
             try {
                 const response = await fetch('/api/time-entries', { headers: getApiHeaders() });
                 if (!response.ok) throw new Error('Failed');
@@ -1190,6 +1210,10 @@
                 console.error('Error updating totals:', error);
             } finally {
                 totalsUpdateInFlight = false;
+                if (totalsRefreshRequested) {
+                    totalsRefreshRequested = false;
+                    updateTotals();
+                }
             }
         }
 
@@ -1242,7 +1266,7 @@
         function updateButtonStyles(activeTask) {
             document.querySelectorAll('.container').forEach(button => {
                 const taskName = button.querySelector('.label').innerText;
-                button.style.opacity = taskName === activeTask ? '1' : '0.4';
+                button.style.opacity = activeTask ? (taskName === activeTask ? '1' : '0.4') : '1';
             });
         }
 
@@ -1268,26 +1292,16 @@
                 Math.abs(new Date(e.stop).getTime() - currentStartTime.getTime()) < 1000
             );
             try {
-                const newCurrentStartTime = new Date(currentStartTime.getTime() - minutes * 60 * 1000);
-                const response1 = await fetch(`/api/time-entries/${currentEntry.id}`, {
-                    method: 'PUT',
+                const response = await fetch(`/api/time-entries/${currentEntry.id}/shift-start`, {
+                    method: 'PATCH',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ start_time: newCurrentStartTime.toISOString() })
+                    body: JSON.stringify({
+                        minutes,
+                        previous_entry_id: previousEntry ? previousEntry.id : null
+                    })
                 });
-                if (!response1.ok) {
-                    throw new Error(`Failed to update current entry: ${response1.status}`);
-                }
-                if (previousEntry) {
-                    const prevEndTime = new Date(previousEntry.stop);
-                    const newPrevEndTime = new Date(prevEndTime.getTime() - minutes * 60 * 1000);
-                    const response2 = await fetch(`/api/time-entries/${previousEntry.id}`, {
-                        method: 'PUT',
-                        headers: getApiHeaders(),
-                        body: JSON.stringify({ end_time: newPrevEndTime.toISOString() })
-                    });
-                    if (!response2.ok) {
-                        throw new Error(`Failed to update previous entry: ${response2.status}`);
-                    }
+                if (!response.ok) {
+                    throw new Error(`Failed to shift entry: ${response.status}`);
                 }
                 await updateTotals();
             } catch (error) {
@@ -1337,11 +1351,13 @@
                 document.getElementById('errorMessage').className = 'error';
                 return;
             }
+            const requestSeq = ++timeEntriesRequestSeq;
             const savedPage = preservePage ? currentPage : null;
             try {
                 const response = await fetch('/api/time-entries?all=true', { headers: getApiHeaders() });
                 if (!response.ok) throw new Error('Failed to load');
                 const entries = await response.json();
+                if (requestSeq !== timeEntriesRequestSeq) return;
                 document.getElementById('loadingMessage').style.display = 'none';
                 allEntries = entries;
                 const datesSet = new Set();
@@ -1357,6 +1373,7 @@
                 }
                 renderEntries();
             } catch (error) {
+                if (requestSeq !== timeEntriesRequestSeq) return;
                 console.error('Error loading entries:', error);
                 document.getElementById('loadingMessage').style.display = 'none';
                 document.getElementById('errorMessage').style.display = 'block';
@@ -1818,36 +1835,17 @@
 
                 const newStartTime = new Date(startTime).toISOString();
                 const newEndTime = endTime ? new Date(endTime).toISOString() : null;
-                const oldStartTime = currentEntry.start;
-                const oldEndTime = currentEntry.stop;
-
-                // Update the current entry
-                const response = await fetch(`/api/time-entries/${entryId}`, {
+                const response = await fetch(`/api/time-entries/${entryId}/edit-linked`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ start_time: newStartTime, end_time: newEndTime })
+                    body: JSON.stringify({
+                        start_time: newStartTime,
+                        end_time: newEndTime,
+                        next_entry_id: nextEntry && nextEntry.stop && newStartTime !== currentEntry.start ? nextEntry.id : null,
+                        previous_entry_id: previousEntry && newEndTime && newEndTime !== currentEntry.stop ? previousEntry.id : null
+                    })
                 });
                 if (!response.ok) throw new Error('Failed');
-
-                // If start time changed, update the previous entry's end time (the one that ends when this one starts)
-                // nextEntry is older/earlier in time, so it's the one whose end_time should match our start_time
-                if (nextEntry && nextEntry.stop && newStartTime !== oldStartTime) {
-                    await fetch(`/api/time-entries/${nextEntry.id}`, {
-                        method: 'PUT',
-                        headers: getApiHeaders(),
-                        body: JSON.stringify({ end_time: newStartTime })
-                    });
-                }
-
-                // If end time changed, update the next entry's start time (the one that starts when this one ends)
-                // previousEntry is more recent/later in time, so it's the one whose start_time should match our end_time
-                if (previousEntry && newEndTime && newEndTime !== oldEndTime) {
-                    await fetch(`/api/time-entries/${previousEntry.id}`, {
-                        method: 'PUT',
-                        headers: getApiHeaders(),
-                        body: JSON.stringify({ start_time: newEndTime })
-                    });
-                }
 
                 loadTimeEntries(true);
             } catch (error) {
@@ -2182,8 +2180,28 @@
 
         // ============ SETTINGS PANE LOGIC ============
         function saveApiKey() {
+            const previousApiToken = apiToken;
             apiToken = document.getElementById('apiTokenInput').value.trim();
             setCookie('apiToken', apiToken, 365);
+            projectsRequestSeq++;
+            currentTaskRequestSeq++;
+            timeEntriesRequestSeq++;
+
+            if (!apiToken) {
+                projects = [];
+                allProjects = [];
+                allEntries = [];
+                projectColors = {};
+                currentTaskId = null;
+                currentTaskName = null;
+                currentTaskStartTime = null;
+                generateTaskContainers();
+                document.getElementById('timeEntriesList').innerHTML = '';
+            }
+
+            if (previousApiToken !== apiToken || !ws) {
+                refreshWebSocketConnection();
+            }
             loadProjectsList();
             fetchProjects();
             loadTimeEntries();
@@ -2360,13 +2378,39 @@
         // ============ WEBSOCKET ============
         let ws = null;
         let wsReconnectTimeout = null;
+        let wsShouldReconnect = true;
+
+        function closeWebSocket(manual = true) {
+            if (wsReconnectTimeout) {
+                clearTimeout(wsReconnectTimeout);
+                wsReconnectTimeout = null;
+            }
+            if (ws) {
+                ws._manualClose = manual;
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function refreshWebSocketConnection() {
+            if (!apiToken) {
+                wsShouldReconnect = false;
+                closeWebSocket(true);
+                return;
+            }
+            wsShouldReconnect = true;
+            closeWebSocket(true);
+            connectWebSocket();
+        }
 
         function connectWebSocket() {
             if (!apiToken) return;
+            closeWebSocket(true);
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}?api_key=${apiToken}`);
-            ws.onopen = () => console.log('WebSocket connected');
-            ws.onmessage = (event) => {
+            const socket = new WebSocket(`${protocol}//${window.location.host}?api_key=${apiToken}`);
+            ws = socket;
+            socket.onopen = () => console.log('WebSocket connected');
+            socket.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
                     handleWebSocketMessage(message);
@@ -2374,12 +2418,24 @@
                     console.error('WebSocket parse error:', error);
                 }
             };
-            ws.onclose = () => {
+            socket.onclose = (event) => {
                 console.log('WebSocket disconnected');
-                ws = null;
-                wsReconnectTimeout = setTimeout(connectWebSocket, 2000);
+                if (ws === socket) {
+                    ws = null;
+                }
+                if (socket._manualClose) return;
+                if (!wsShouldReconnect || !apiToken) return;
+                if (event.code === 1008) {
+                    console.warn('WebSocket closed due to authentication failure. Reconnect disabled until API key changes.');
+                    return;
+                }
+                wsReconnectTimeout = setTimeout(() => {
+                    if (wsShouldReconnect && apiToken) {
+                        connectWebSocket();
+                    }
+                }, 2000);
             };
-            ws.onerror = (error) => console.error('WebSocket error:', error);
+            socket.onerror = (error) => console.error('WebSocket error:', error);
         }
 
         function handleWebSocketMessage(message) {
