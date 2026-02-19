@@ -217,12 +217,65 @@ if (!process.env.ADMIN_PASSWORD) {
 }
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
-// Middleware for admin password protection
+// Rate limiting for admin password attempts
+const adminLoginAttempts = new Map(); // Map<ip, { count, blockedUntil }>
+const MAX_ADMIN_ATTEMPTS = 10;
+const ADMIN_BLOCK_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+function getClientIp(req) {
+    // Trust X-Forwarded-For if behind a proxy, otherwise use socket address
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+        return forwarded.split(',')[0].trim();
+    }
+    return req.socket.remoteAddress || 'unknown';
+}
+
+function cleanupExpiredAttempts() {
+    const now = Date.now();
+    for (const [ip, data] of adminLoginAttempts.entries()) {
+        if (data.blockedUntil && data.blockedUntil < now) {
+            adminLoginAttempts.delete(ip);
+        }
+    }
+}
+
+// Middleware for admin password protection with rate limiting
 function requireAdminPassword(req, res, next) {
+    const ip = getClientIp(req);
+    const now = Date.now();
+
+    // Clean up expired entries periodically
+    if (Math.random() < 0.1) cleanupExpiredAttempts();
+
+    // Check if IP is blocked
+    const attemptData = adminLoginAttempts.get(ip);
+    if (attemptData && attemptData.blockedUntil && attemptData.blockedUntil > now) {
+        const remainingSeconds = Math.ceil((attemptData.blockedUntil - now) / 1000);
+        return res.status(429).json({
+            error: `Too many failed attempts. Try again in ${remainingSeconds} seconds.`
+        });
+    }
+
     const password = req.headers['x-admin-password'] || req.body.password || req.query.password;
     if (password !== ADMIN_PASSWORD) {
+        // Track failed attempt
+        if (!attemptData) {
+            adminLoginAttempts.set(ip, { count: 1, blockedUntil: null });
+        } else {
+            attemptData.count += 1;
+            if (attemptData.count >= MAX_ADMIN_ATTEMPTS) {
+                attemptData.blockedUntil = now + ADMIN_BLOCK_DURATION_MS;
+                return res.status(429).json({
+                    error: `Too many failed attempts. Try again in 15 minutes.`
+                });
+            }
+        }
         return res.status(401).json({ error: 'Unauthorized' });
     }
+
+    // Successful authentication - clear failed attempts
+    adminLoginAttempts.delete(ip);
     next();
 }
 
@@ -265,11 +318,17 @@ app.post('/api/projects', requireApiKey, (req, res) => {
         if (!name || target_hours === undefined) {
             return res.status(400).json({ error: 'Name and target_hours are required' });
         }
+        if (typeof name !== 'string' || name.length > 100) {
+            return res.status(400).json({ error: 'Project name must be 100 characters or less' });
+        }
         const targetHours = parseFloat(target_hours);
         if (!Number.isFinite(targetHours) || targetHours <= 0) {
             return res.status(400).json({ error: 'target_hours must be a positive number' });
         }
-        
+        if (targetHours > 168) {
+            return res.status(400).json({ error: 'target_hours cannot exceed 168 (hours per week)' });
+        }
+
         const colors = ['#f94144', '#f3722c', '#f8961e', '#f9844a', '#f9c74f', '#90be6d', '#43aa8b', '#4d908e', '#577590', '#277da1'];
         const projectColor = color || colors[Math.floor(Math.random() * colors.length)];
         
@@ -298,11 +357,17 @@ app.put('/api/projects/:id', requireApiKey, (req, res) => {
         if (!name || target_hours === undefined) {
             return res.status(400).json({ error: 'Name and target_hours are required' });
         }
+        if (typeof name !== 'string' || name.length > 100) {
+            return res.status(400).json({ error: 'Project name must be 100 characters or less' });
+        }
         const targetHours = parseFloat(target_hours);
         if (!Number.isFinite(targetHours) || targetHours <= 0) {
             return res.status(400).json({ error: 'target_hours must be a positive number' });
         }
-        
+        if (targetHours > 168) {
+            return res.status(400).json({ error: 'target_hours cannot exceed 168 (hours per week)' });
+        }
+
         let query = 'UPDATE projects SET name = ?, target_hours = ?';
         const params = [name, targetHours];
         
@@ -856,6 +921,9 @@ app.delete('/api/time-entries/:id', requireApiKey, (req, res) => {
 app.post('/api/admin/keys', requireAdminPassword, (req, res) => {
     try {
         const { name } = req.body;
+        if (name !== undefined && name !== null && (typeof name !== 'string' || name.length > 100)) {
+            return res.status(400).json({ error: 'API key name must be 100 characters or less' });
+        }
         const apiKey = crypto.randomBytes(32).toString('hex');
         const stmt = db.prepare('INSERT INTO api_keys (api_key, name) VALUES (?, ?)');
         const result = stmt.run(apiKey, name || null);
@@ -882,6 +950,9 @@ app.get('/api/admin/keys', requireAdminPassword, (req, res) => {
 app.put('/api/admin/keys/:id', requireAdminPassword, (req, res) => {
     try {
         const { name } = req.body;
+        if (name !== undefined && name !== null && (typeof name !== 'string' || name.length > 100)) {
+            return res.status(400).json({ error: 'API key name must be 100 characters or less' });
+        }
         const stmt = db.prepare('UPDATE api_keys SET name = ? WHERE id = ?');
         const result = stmt.run(name || null, parseInt(req.params.id));
         if (result.changes === 0) {

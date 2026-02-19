@@ -750,8 +750,8 @@
                     <button onclick="randomizeColors()" style="margin-bottom: 1em;">Randomize Colors</button>
                     <div id="projectsList"></div>
                     <div class="add-project-form">
-                        <input type="text" id="newProjectName" placeholder="Project name">
-                        <input type="number" id="newProjectHours" placeholder="Target hours" step="0.1" min="0">
+                        <input type="text" id="newProjectName" placeholder="Project name" maxlength="100">
+                        <input type="number" id="newProjectHours" placeholder="Target hours" step="0.1" min="0" max="168">
                         <button onclick="addProject()">Add Project</button>
                     </div>
                 </div>
@@ -789,11 +789,19 @@
         let currentTaskElapsedAtLastUpdateHours = 0;
         let totalsUpdateInFlight = false;
         let totalsRefreshRequested = false;
+        let addTimeInFlight = false;
+        let projectsFetchInFlight = false;
+        let projectsFetchRequested = false;
+        let timeEntriesFetchInFlight = false;
+        let timeEntriesFetchRequested = false;
+        let timeEntriesPreservePage = false;
         let projectsRequestSeq = 0;
         let currentTaskRequestSeq = 0;
         let timeEntriesRequestSeq = 0;
         const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
         const DEFAULT_TITLE = 'Clock-Out';
+        const GAP_TOLERANCE_ENTRY_MS = 1000; // 1 second tolerance for entry gaps
+        const GAP_TOLERANCE_PRESENT_MS = 60000; // 60 seconds tolerance for gap to present
 
         // History state
         let allEntries = [];
@@ -808,6 +816,22 @@
         let dragDateKey = null;
         let pendingTimeRange = null;
         let pendingEntryIdForProjectChange = null;
+
+        // Setter functions to ensure mutual exclusivity of pending states
+        function setPendingTimeRange(range) {
+            pendingEntryIdForProjectChange = null;
+            pendingTimeRange = range;
+        }
+
+        function setPendingEntryIdForProjectChange(entryId) {
+            pendingTimeRange = null;
+            pendingEntryIdForProjectChange = entryId;
+        }
+
+        function clearPendingStates() {
+            pendingTimeRange = null;
+            pendingEntryIdForProjectChange = null;
+        }
         let timeIndicatorStart = null;
         let timeIndicatorEnd = null;
 
@@ -1001,8 +1025,13 @@
                 return;
             }
             const untrackedHours = Math.max(0, 168 - totalHours);
-            const hours = Math.floor(untrackedHours);
-            const minutes = Math.round((untrackedHours - hours) * 60);
+            let hours = Math.floor(untrackedHours);
+            let minutes = Math.round((untrackedHours - hours) * 60);
+            // Handle case where rounding produces 60 minutes
+            if (minutes >= 60) {
+                hours += 1;
+                minutes = 0;
+            }
             const untrackedText = document.getElementById('untrackedText');
             if (untrackedHours > 1) {
                 untrackedText.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
@@ -1041,11 +1070,20 @@
                 generateTaskContainers();
                 return;
             }
+            if (projectsFetchInFlight) {
+                projectsFetchRequested = true;
+                return;
+            }
+            projectsFetchInFlight = true;
+            projectsFetchRequested = false;
             const requestSeq = ++projectsRequestSeq;
             try {
                 const response = await fetch('/api/projects', { headers: getApiHeaders() });
+                // Check sequence immediately after network request completes
+                if (requestSeq !== projectsRequestSeq) return;
                 if (!response.ok) throw new Error('Failed to fetch');
                 const data = await response.json();
+                // Check again after JSON parsing
                 if (requestSeq !== projectsRequestSeq) return;
                 projects = data.map(p => ({
                     id: p.id,
@@ -1066,6 +1104,12 @@
                 allProjects = [];
                 projectColors = {};
                 generateTaskContainers();
+            } finally {
+                projectsFetchInFlight = false;
+                if (projectsFetchRequested) {
+                    projectsFetchRequested = false;
+                    fetchProjects();
+                }
             }
         }
 
@@ -1120,8 +1164,11 @@
             }
             try {
                 const response = await fetch('/api/time-entries/current', { headers: getApiHeaders() });
+                // Check sequence immediately after network request completes
+                if (requestSeq !== currentTaskRequestSeq) return;
                 if (!response.ok) throw new Error('Failed');
                 const data = await response.json();
+                // Check again after JSON parsing
                 if (requestSeq !== currentTaskRequestSeq) return;
                 if (data && data.id) {
                     currentTaskId = data.id;
@@ -1281,17 +1328,19 @@
 
         async function addTimeToCurrentTask(minutes) {
             if (!apiToken) { alert('Please enter an API key in settings first.'); return; }
-            const entries = await fetchRecentEntries();
-            if (entries.length === 0) { alert('No time entries found.'); return; }
-            const currentEntry = entries[0];
-            const currentStartTime = new Date(currentEntry.start);
-            // Find the previous entry whose stop time matches (within 1 second) the current entry's start time
-            const previousEntry = entries.find(e =>
-                e.id !== currentEntry.id &&
-                e.stop &&
-                Math.abs(new Date(e.stop).getTime() - currentStartTime.getTime()) < 1000
-            );
+            if (addTimeInFlight) return; // Prevent concurrent requests
+            addTimeInFlight = true;
             try {
+                const entries = await fetchRecentEntries();
+                if (entries.length === 0) { alert('No time entries found.'); return; }
+                const currentEntry = entries[0];
+                const currentStartTime = new Date(currentEntry.start);
+                // Find the previous entry whose stop time matches (within 1 second) the current entry's start time
+                const previousEntry = entries.find(e =>
+                    e.id !== currentEntry.id &&
+                    e.stop &&
+                    Math.abs(new Date(e.stop).getTime() - currentStartTime.getTime()) < 1000
+                );
                 const response = await fetch(`/api/time-entries/${currentEntry.id}/shift-start`, {
                     method: 'PATCH',
                     headers: getApiHeaders(),
@@ -1307,6 +1356,8 @@
             } catch (error) {
                 console.error('Error adding time:', error);
                 alert(`Error adding time: ${error.message}`);
+            } finally {
+                addTimeInFlight = false;
             }
         }
 
@@ -1351,12 +1402,23 @@
                 document.getElementById('errorMessage').className = 'error';
                 return;
             }
+            if (timeEntriesFetchInFlight) {
+                timeEntriesFetchRequested = true;
+                // Preserve page if any request wanted to preserve it
+                timeEntriesPreservePage = timeEntriesPreservePage || preservePage;
+                return;
+            }
+            timeEntriesFetchInFlight = true;
+            timeEntriesFetchRequested = false;
             const requestSeq = ++timeEntriesRequestSeq;
             const savedPage = preservePage ? currentPage : null;
             try {
                 const response = await fetch('/api/time-entries?all=true', { headers: getApiHeaders() });
+                // Check sequence immediately after network request completes
+                if (requestSeq !== timeEntriesRequestSeq) return;
                 if (!response.ok) throw new Error('Failed to load');
                 const entries = await response.json();
+                // Check again after JSON parsing
                 if (requestSeq !== timeEntriesRequestSeq) return;
                 document.getElementById('loadingMessage').style.display = 'none';
                 allEntries = entries;
@@ -1379,6 +1441,14 @@
                 document.getElementById('errorMessage').style.display = 'block';
                 document.getElementById('errorMessage').textContent = error.message;
                 document.getElementById('errorMessage').className = 'error';
+            } finally {
+                timeEntriesFetchInFlight = false;
+                if (timeEntriesFetchRequested) {
+                    const shouldPreservePage = timeEntriesPreservePage;
+                    timeEntriesFetchRequested = false;
+                    timeEntriesPreservePage = false;
+                    loadTimeEntries(shouldPreservePage);
+                }
             }
         }
 
@@ -1466,8 +1536,7 @@
         }
 
         function fillUntrackedTime(gapStartTime, gapEndTime, dateKey) {
-            pendingTimeRange = { startTime: gapStartTime, endTime: gapEndTime, dateKey };
-            pendingEntryIdForProjectChange = null;
+            setPendingTimeRange({ startTime: gapStartTime, endTime: gapEndTime, dateKey });
             showProjectModal();
         }
 
@@ -1571,6 +1640,7 @@
                 entriesByDate[dateKey].sort((a, b) => new Date(b.start) - new Date(a.start));
             });
             let entriesHtml = '';
+            const processedGaps = new Set(); // Track processed gaps to prevent duplicates
             currentPageDates.forEach(dateKey => {
                 const currentDayEntries = entriesByDate[dateKey] || [];
                 let allItems = [];
@@ -1632,22 +1702,27 @@
                     if (!isCrossDay && previousEntryEndTime !== null && previousEntry !== null) {
                         const entryStartTime = new Date(entry.start);
                         const prevEndTime = new Date(previousEntryEndTime);
-                        if (Math.abs(entryStartTime.getTime() - prevEndTime.getTime()) > 1000) {
+                        if (Math.abs(entryStartTime.getTime() - prevEndTime.getTime()) > GAP_TOLERANCE_ENTRY_MS) {
                             // For gaps, use the current dateKey if the gap starts during this day
                             const gapStartDate = formatDate(previousEntryEndTime);
                             const gapDateKey = gapStartDate === dateKey ? dateKey : gapStartDate;
                             // For cross-midnight gaps, use actual previous entry stop time for fill
                             const isCrossMidnightGap = gapStartDate !== formatDate(previousEntry.stop);
-                            allItems.push({
-                                type: 'gap',
-                                gapStart: previousEntryEndTime,
-                                gapEnd: entry.start,
-                                dateKey: gapDateKey,
-                                previousEntryId: previousEntry.id,
-                                nextEntryId: entry.id,
-                                fillStart: isCrossMidnightGap ? previousEntry.stop : previousEntryEndTime,
-                                fillEnd: entry.start
-                            });
+                            // Create unique gap key to prevent duplicates
+                            const gapKey = `${previousEntry.id}-${entry.id}-${previousEntryEndTime}-${entry.start}`;
+                            if (!processedGaps.has(gapKey)) {
+                                processedGaps.add(gapKey);
+                                allItems.push({
+                                    type: 'gap',
+                                    gapStart: previousEntryEndTime,
+                                    gapEnd: entry.start,
+                                    dateKey: gapDateKey,
+                                    previousEntryId: previousEntry.id,
+                                    nextEntryId: entry.id,
+                                    fillStart: isCrossMidnightGap ? previousEntry.stop : previousEntryEndTime,
+                                    fillEnd: entry.start
+                                });
+                            }
                         }
                     }
                     allItems.push({ type: 'entry', entry, dateKey: entryDateKey, isCrossDay });
@@ -1666,8 +1741,8 @@
                     const dayEnd = new Date(dateKey + 'T00:00:00');
                     dayEnd.setDate(dayEnd.getDate() + 1); // midnight = end of this day
 
-                    // Only add gap if the last entry ended before midnight (with 1 second tolerance)
-                    if (lastEntryEnd.getTime() < dayEnd.getTime() - 1000) {
+                    // Only add gap if the last entry ended before midnight (with tolerance)
+                    if (lastEntryEnd.getTime() < dayEnd.getTime() - GAP_TOLERANCE_ENTRY_MS) {
                         // Find the first entry that starts after this day's midnight
                         const futureEntries = allEntries.filter(entry => {
                             const entryStart = new Date(entry.start);
@@ -1677,17 +1752,21 @@
                         if (futureEntries.length > 0) {
                             futureEntries.sort((a, b) => new Date(a.start) - new Date(b.start));
                             const nextEntry = futureEntries[0];
-
-                            allItems.push({
-                                type: 'gap',
-                                gapStart: previousEntryEndTime,
-                                gapEnd: dayEnd.toISOString(),
-                                dateKey: dateKey,
-                                previousEntryId: previousEntry.id,
-                                nextEntryId: nextEntry.id,
-                                fillStart: previousEntryEndTime,
-                                fillEnd: nextEntry.start
-                            });
+                            // Create unique gap key to prevent duplicates
+                            const endOfDayGapKey = `${previousEntry.id}-${nextEntry.id}-endofday-${dateKey}`;
+                            if (!processedGaps.has(endOfDayGapKey)) {
+                                processedGaps.add(endOfDayGapKey);
+                                allItems.push({
+                                    type: 'gap',
+                                    gapStart: previousEntryEndTime,
+                                    gapEnd: dayEnd.toISOString(),
+                                    dateKey: dateKey,
+                                    previousEntryId: previousEntry.id,
+                                    nextEntryId: nextEntry.id,
+                                    fillStart: previousEntryEndTime,
+                                    fillEnd: nextEntry.start
+                                });
+                            }
                         }
                     }
                 }
@@ -1696,18 +1775,23 @@
                 if (previousEntry && previousEntryEndTime && dateKey === todayDateKey) {
                     const lastEntryEnd = new Date(previousEntryEndTime);
                     const now = new Date();
-                    // Only add gap if there's at least 1 minute of untracked time (60 seconds)
-                    if (now.getTime() - lastEntryEnd.getTime() > 60000) {
-                        allItems.push({
-                            type: 'gap',
-                            gapStart: previousEntryEndTime,
-                            gapEnd: now.toISOString(),
-                            dateKey: dateKey,
-                            previousEntryId: previousEntry.id,
-                            nextEntryId: null,
-                            fillStart: previousEntryEndTime,
-                            fillEnd: now.toISOString()
-                        });
+                    // Only add gap if there's at least 1 minute of untracked time
+                    if (now.getTime() - lastEntryEnd.getTime() > GAP_TOLERANCE_PRESENT_MS) {
+                        // Create unique gap key to prevent duplicates
+                        const presentGapKey = `${previousEntry.id}-present-${dateKey}`;
+                        if (!processedGaps.has(presentGapKey)) {
+                            processedGaps.add(presentGapKey);
+                            allItems.push({
+                                type: 'gap',
+                                gapStart: previousEntryEndTime,
+                                gapEnd: now.toISOString(),
+                                dateKey: dateKey,
+                                previousEntryId: previousEntry.id,
+                                nextEntryId: null,
+                                fillStart: previousEntryEndTime,
+                                fillEnd: now.toISOString()
+                            });
+                        }
                     }
                 }
 
@@ -1864,29 +1948,37 @@
 
         async function extendAbove(previousEntryId, nextEntryId, gapStartTime) {
             try {
-                await fetch(`/api/time-entries/${nextEntryId}`, {
+                const response = await fetch(`/api/time-entries/${nextEntryId}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ start_time: gapStartTime })
                 });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to extend entry');
+                }
                 await loadTimeEntries(true);
             } catch (error) {
                 console.error('Error extending:', error);
-                alert('Error extending entry.');
+                alert(`Error extending entry: ${error.message}`);
             }
         }
 
         async function extendBelow(previousEntryId, nextEntryId, gapEndTime) {
             try {
-                await fetch(`/api/time-entries/${previousEntryId}`, {
+                const response = await fetch(`/api/time-entries/${previousEntryId}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ end_time: gapEndTime })
                 });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to extend entry');
+                }
                 await loadTimeEntries(true);
             } catch (error) {
                 console.error('Error extending:', error);
-                alert('Error extending entry.');
+                alert(`Error extending entry: ${error.message}`);
             }
         }
 
@@ -2010,7 +2102,7 @@
             startDate.setMinutes(startSlot * 30);
             const endDate = new Date(year, month - 1, day);
             endDate.setMinutes(endSlot * 30);
-            pendingTimeRange = { startTime: startDate.toISOString(), endTime: endDate.toISOString(), dateKey };
+            setPendingTimeRange({ startTime: startDate.toISOString(), endTime: endDate.toISOString(), dateKey });
             showProjectModal();
         }
 
@@ -2079,8 +2171,7 @@
 
         function hideProjectModal() {
             document.getElementById('projectModal').classList.remove('visible');
-            pendingTimeRange = null;
-            pendingEntryIdForProjectChange = null;
+            clearPendingStates();
             document.querySelectorAll('.day-minimap').forEach(minimap => {
                 const selection = minimap.querySelector('.drag-selection');
                 if (selection) minimap.removeChild(selection);
@@ -2101,14 +2192,31 @@
         function adjustForOverlaps(startStr, endStr, existingEntries) {
             let newStart = new Date(startStr);
             let newEnd = new Date(endStr);
-            for (const entry of existingEntries) {
-                const entryStart = new Date(entry.start);
-                const entryEnd = entry.stop ? new Date(entry.stop) : new Date();
-                if (newStart < entryEnd && newEnd > entryStart) {
-                    if (entryStart <= newStart && entryEnd >= newEnd) return null;
-                    else if (entryEnd > newStart && entryEnd < newEnd) newStart = new Date(entryEnd);
-                    else if (entryStart > newStart && entryStart < newEnd) newEnd = new Date(entryStart);
+            const maxIterations = existingEntries.length + 1;
+            for (let iteration = 0; iteration < maxIterations; iteration++) {
+                let adjusted = false;
+                for (const entry of existingEntries) {
+                    const entryStart = new Date(entry.start);
+                    const entryEnd = entry.stop ? new Date(entry.stop) : new Date();
+                    if (newStart < entryEnd && newEnd > entryStart) {
+                        // Completely covered by existing entry
+                        if (entryStart <= newStart && entryEnd >= newEnd) return null;
+                        // Entry overlaps start of new range
+                        else if (entryEnd > newStart && entryEnd < newEnd) {
+                            newStart = new Date(entryEnd);
+                            adjusted = true;
+                        }
+                        // Entry overlaps end of new range
+                        else if (entryStart > newStart && entryStart < newEnd) {
+                            newEnd = new Date(entryStart);
+                            adjusted = true;
+                        }
+                    }
                 }
+                // If no adjustments made, we're done
+                if (!adjusted) break;
+                // Check if range is now invalid
+                if (newStart >= newEnd) return null;
             }
             return newStart >= newEnd ? null : { start: newStart.toISOString(), end: newEnd.toISOString() };
         }
@@ -2126,16 +2234,21 @@
         async function selectProject(projectId, projectName, projectColor) {
             if (pendingEntryIdForProjectChange) {
                 try {
-                    await fetch(`/api/time-entries/${pendingEntryIdForProjectChange}`, {
+                    const response = await fetch(`/api/time-entries/${pendingEntryIdForProjectChange}`, {
                         method: 'PUT',
                         headers: getApiHeaders(),
                         body: JSON.stringify({ project_id: projectId })
                     });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.error || 'Failed to change project');
+                    }
                     hideProjectModal();
                     // WebSocket handler will trigger loadTimeEntries
                 } catch (error) {
                     console.error('Error changing project:', error);
-                    hideProjectModal();
+                    alert(`Error changing project: ${error.message}`);
+                    // Don't hide modal on error so user can try again
                 }
                 return;
             }
@@ -2154,13 +2267,13 @@
                 // WebSocket handler will trigger loadTimeEntries
             } catch (error) {
                 console.error('Error creating entry:', error);
-                hideProjectModal();
+                alert(`Error creating entry: ${error.message}`);
+                // Don't hide modal on error so user can try again
             }
         }
 
         function changeEntryProject(entryId) {
-            pendingEntryIdForProjectChange = entryId;
-            pendingTimeRange = null;
+            setPendingEntryIdForProjectChange(entryId);
             showProjectModal();
         }
 
@@ -2299,8 +2412,8 @@
             const editForm = document.createElement('div');
             editForm.className = 'settings-edit-form';
             editForm.innerHTML = `
-                <input type="text" id="edit-project-name-${projectId}" value="${currentName}" placeholder="Project name">
-                <input type="number" id="edit-project-hours-${projectId}" value="${currentHours}" placeholder="Target hours" step="0.1" min="0">
+                <input type="text" id="edit-project-name-${projectId}" value="${currentName}" placeholder="Project name" maxlength="100">
+                <input type="number" id="edit-project-hours-${projectId}" value="${currentHours}" placeholder="Target hours" step="0.1" min="0" max="168">
                 <div class="settings-edit-form-buttons">
                     <button class="settings-save-btn" onclick="saveProjectSettings(${projectId})">Save</button>
                     <button class="settings-cancel-btn" onclick="cancelEditSettings(${projectId})">Cancel</button>
@@ -2342,44 +2455,59 @@
             if (!apiToken) { alert('Please enter an API key first.'); return; }
             try {
                 const getResponse = await fetch('/api/projects?include_hidden=true', { headers: getApiHeaders() });
-                if (!getResponse.ok) throw new Error('Failed');
+                if (!getResponse.ok) {
+                    const errorData = await getResponse.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to fetch projects');
+                }
                 const projects = await getResponse.json();
                 const project = projects.find(p => p.id === projectId);
                 if (!project) { alert('Project not found.'); return; }
-                await fetch(`/api/projects/${projectId}`, {
+                const putResponse = await fetch(`/api/projects/${projectId}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ name: project.name, target_hours: project.target_hours, visible: newVisibility })
                 });
+                if (!putResponse.ok) {
+                    const errorData = await putResponse.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to update visibility');
+                }
                 loadProjectsList();
                 fetchProjects();
             } catch (error) {
                 console.error('Error toggling visibility:', error);
-                alert('Error toggling visibility.');
+                alert(`Error toggling visibility: ${error.message}`);
             }
         }
 
         async function deleteProject(projectId) {
             if (!confirm('Are you sure you want to delete this project?')) return;
             try {
-                await fetch(`/api/projects/${projectId}`, { method: 'DELETE', headers: getApiHeaders() });
+                const response = await fetch(`/api/projects/${projectId}`, { method: 'DELETE', headers: getApiHeaders() });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to delete project');
+                }
                 loadProjectsList();
                 fetchProjects();
             } catch (error) {
                 console.error('Error deleting project:', error);
-                alert('Error deleting project.');
+                alert(`Error deleting project: ${error.message}`);
             }
         }
 
         async function randomizeColors() {
             if (!apiToken) { alert('Please enter an API key first.'); return; }
             try {
-                await fetch('/api/projects/randomize-colors', { method: 'POST', headers: getApiHeaders() });
+                const response = await fetch('/api/projects/randomize-colors', { method: 'POST', headers: getApiHeaders() });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to randomize colors');
+                }
                 loadProjectsList();
                 fetchProjects();
             } catch (error) {
                 console.error('Error randomizing colors:', error);
-                alert('Error randomizing colors.');
+                alert(`Error randomizing colors: ${error.message}`);
             }
         }
 
@@ -2387,6 +2515,8 @@
         let ws = null;
         let wsReconnectTimeout = null;
         let wsShouldReconnect = true;
+        let wsMessageQueue = [];
+        let wsProcessingQueue = false;
 
         function closeWebSocket(manual = true) {
             if (wsReconnectTimeout) {
@@ -2421,7 +2551,8 @@
             socket.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-                    handleWebSocketMessage(message);
+                    wsMessageQueue.push(message);
+                    processWebSocketQueue();
                 } catch (error) {
                     console.error('WebSocket parse error:', error);
                 }
@@ -2446,16 +2577,29 @@
             socket.onerror = (error) => console.error('WebSocket error:', error);
         }
 
-        function handleWebSocketMessage(message) {
+        async function processWebSocketQueue() {
+            if (wsProcessingQueue) return;
+            wsProcessingQueue = true;
+            try {
+                while (wsMessageQueue.length > 0) {
+                    const message = wsMessageQueue.shift();
+                    await handleWebSocketMessage(message);
+                }
+            } finally {
+                wsProcessingQueue = false;
+            }
+        }
+
+        async function handleWebSocketMessage(message) {
             console.log('WebSocket:', message.type);
             switch (message.type) {
                 case 'project_created':
                 case 'project_updated':
                 case 'project_deleted':
                 case 'projects_updated':
-                    fetchProjects();
-                    loadProjectsList();
-                    loadTimeEntries(true);
+                    await fetchProjects();
+                    await loadProjectsList();
+                    await loadTimeEntries(true);
                     break;
                 case 'time_entry_started':
                     currentTaskId = message.data.id;
@@ -2465,7 +2609,7 @@
                     renderTotalsFromCache();
                     updateButtonStyles(message.data.name);
                     updateDocumentTitle();
-                    loadTimeEntries(true);
+                    await loadTimeEntries(true);
                     break;
                 case 'time_entry_stopped':
                     if (currentTaskId === message.data.id) {
@@ -2475,15 +2619,15 @@
                         updateButtonStyles(null);
                         updateDocumentTitle();
                     }
-                    updateTotals();
-                    loadTimeEntries(true);
+                    await updateTotals();
+                    await loadTimeEntries(true);
                     break;
                 case 'time_entry_created':
                 case 'time_entry_updated':
                 case 'time_entry_deleted':
-                    updateTotals();
-                    getCurrentTask();
-                    loadTimeEntries(true);
+                    await updateTotals();
+                    await getCurrentTask();
+                    await loadTimeEntries(true);
                     break;
             }
         }
