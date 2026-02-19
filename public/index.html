@@ -1260,23 +1260,34 @@
             const entries = await fetchRecentEntries();
             if (entries.length === 0) { alert('No time entries found.'); return; }
             const currentEntry = entries[0];
-            const previousEntry = entries.length > 1 ? entries[1] : null;
+            const currentStartTime = new Date(currentEntry.start);
+            // Find the previous entry whose stop time matches (within 1 second) the current entry's start time
+            const previousEntry = entries.find(e =>
+                e.id !== currentEntry.id &&
+                e.stop &&
+                Math.abs(new Date(e.stop).getTime() - currentStartTime.getTime()) < 1000
+            );
             try {
-                const currentStartTime = new Date(currentEntry.start);
                 const newCurrentStartTime = new Date(currentStartTime.getTime() - minutes * 60 * 1000);
-                await fetch(`/api/time-entries/${currentEntry.id}`, {
+                const response1 = await fetch(`/api/time-entries/${currentEntry.id}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ start_time: newCurrentStartTime.toISOString() })
                 });
-                if (previousEntry && previousEntry.stop) {
+                if (!response1.ok) {
+                    throw new Error(`Failed to update current entry: ${response1.status}`);
+                }
+                if (previousEntry) {
                     const prevEndTime = new Date(previousEntry.stop);
                     const newPrevEndTime = new Date(prevEndTime.getTime() - minutes * 60 * 1000);
-                    await fetch(`/api/time-entries/${previousEntry.id}`, {
+                    const response2 = await fetch(`/api/time-entries/${previousEntry.id}`, {
                         method: 'PUT',
                         headers: getApiHeaders(),
                         body: JSON.stringify({ end_time: newPrevEndTime.toISOString() })
                     });
+                    if (!response2.ok) {
+                        throw new Error(`Failed to update previous entry: ${response2.status}`);
+                    }
                 }
                 await updateTotals();
             } catch (error) {
