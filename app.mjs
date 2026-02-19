@@ -800,10 +800,7 @@ app.put('/api/time-entries/:id/edit-linked', requireApiKey, (req, res) => {
                 if (!previousEntry) {
                     return { error: { code: 404, message: 'Linked previous entry not found' } };
                 }
-                if (!previousEntry.end_time) {
-                    return { error: { code: 400, message: 'Linked previous entry must be completed' } };
-                }
-                if (newEnd >= new Date(previousEntry.end_time)) {
+                if (previousEntry.end_time && newEnd >= new Date(previousEntry.end_time)) {
                     return { error: { code: 400, message: 'Linked previous entry would become invalid' } };
                 }
                 db.prepare('UPDATE time_entries SET start_time = ? WHERE id = ? AND api_key_id = ?')

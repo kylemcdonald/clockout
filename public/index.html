@@ -1830,19 +1830,27 @@
                 // Find this entry and its neighbors in allEntries (sorted by start time descending)
                 const entryIndex = allEntries.findIndex(e => e.id === entryId);
                 const currentEntry = allEntries[entryIndex];
+                if (!currentEntry) throw new Error('Entry not found in local state');
                 const previousEntry = entryIndex > 0 ? allEntries[entryIndex - 1] : null; // More recent (later in time)
                 const nextEntry = entryIndex < allEntries.length - 1 ? allEntries[entryIndex + 1] : null; // Older (earlier in time)
 
-                const newStartTime = new Date(startTime).toISOString();
-                const newEndTime = endTime ? new Date(endTime).toISOString() : null;
+                const originalStartInput = formatDateTimeForInput(currentEntry.start);
+                const originalEndInput = currentEntry.stop ? formatDateTimeForInput(currentEntry.stop) : '';
+                const startChanged = startTime !== originalStartInput;
+                const endChanged = endTime !== originalEndInput;
+
+                const newStartTime = startChanged ? new Date(startTime).toISOString() : currentEntry.start;
+                const newEndTime = endTime
+                    ? (endChanged ? new Date(endTime).toISOString() : currentEntry.stop)
+                    : null;
                 const response = await fetch(`/api/time-entries/${entryId}/edit-linked`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({
                         start_time: newStartTime,
                         end_time: newEndTime,
-                        next_entry_id: nextEntry && nextEntry.stop && newStartTime !== currentEntry.start ? nextEntry.id : null,
-                        previous_entry_id: previousEntry && newEndTime && newEndTime !== currentEntry.stop ? previousEntry.id : null
+                        next_entry_id: nextEntry && nextEntry.stop && startChanged ? nextEntry.id : null,
+                        previous_entry_id: previousEntry && newEndTime && endChanged ? previousEntry.id : null
                     })
                 });
                 if (!response.ok) throw new Error('Failed');
