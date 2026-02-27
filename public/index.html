@@ -735,7 +735,7 @@
                 </p>
                 <div class="settings-section">
                     <label>API Key:</label>
-                    <input type="password" id="apiTokenInput" placeholder="Enter your API key" autocomplete="off" data-1p-ignore="true" data-lpignore="true" onclick="this.type='text'" oninput="document.getElementById('saveApiKeyBtn').style.display='inline-block'">
+                    <input type="text" id="apiTokenInput" placeholder="Enter your API key" autocomplete="off" data-1p-ignore="true" data-lpignore="true" style="-webkit-text-security: disc;" onclick="this.style.webkitTextSecurity='none'" oninput="document.getElementById('saveApiKeyBtn').style.display='inline-block'">
                     <button id="saveApiKeyBtn" onclick="saveApiKey()" style="display: none;">Save API Key</button>
                 </div>
                 <div class="settings-section">
