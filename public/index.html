@@ -2411,9 +2411,11 @@
                 if (totalHours === 168) {
                     hoursStatusEl.textContent = 'All 168 hours assigned.';
                 } else if (totalHours > 168) {
-                    hoursStatusEl.textContent = `${totalHours - 168} hours over 168.`;
+                    const diff = totalHours - 168;
+                    hoursStatusEl.textContent = `${diff} ${diff === 1 ? 'hour' : 'hours'} over 168.`;
                 } else {
-                    hoursStatusEl.textContent = `${168 - totalHours} hours under 168.`;
+                    const diff = 168 - totalHours;
+                    hoursStatusEl.textContent = `${diff} ${diff === 1 ? 'hour' : 'hours'} under 168.`;
                 }
             } catch (error) {
                 console.error('Error loading projects:', error);
