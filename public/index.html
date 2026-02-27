@@ -752,6 +752,7 @@
                     <h3>Projects</h3>
                     <button onclick="randomizeColors()" style="margin-bottom: 1em;">Randomize Colors</button>
                     <div id="projectsList"></div>
+                    <p id="hoursStatus" style="color: rgba(255,255,255,0.7); margin: 1em 0; font-size: 0.95em;"></p>
                     <div class="add-project-form">
                         <input type="text" id="newProjectName" placeholder="Project name" maxlength="100">
                         <input type="number" id="newProjectHours" placeholder="Target hours" step="0.1" min="0" max="168">
@@ -1924,6 +1925,11 @@
             const startTime = startInput.value;
             const endTime = endInput.value;
             if (!startTime) { alert('Start time is required'); return; }
+            // Frontend check for negative/zero duration
+            if (endTime && new Date(startTime) >= new Date(endTime)) {
+                alert('Start time must be before end time (duration cannot be zero or negative)');
+                return;
+            }
             try {
                 // Find this entry and its neighbors in allEntries (sorted by start time descending)
                 const entryIndex = allEntries.findIndex(e => e.id === entryId);
@@ -1951,12 +1957,15 @@
                         previous_entry_id: previousEntry && newEndTime && endChanged ? previousEntry.id : null
                     })
                 });
-                if (!response.ok) throw new Error('Failed');
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to save entry');
+                }
 
                 loadTimeEntries(true);
             } catch (error) {
                 console.error('Error saving:', error);
-                alert('Error saving entry.');
+                alert(error.message);
             }
         }
 
@@ -2396,6 +2405,16 @@
                         editProjectSettings(projectId, projectName, projectHours);
                     });
                 });
+                // Calculate and display hours status
+                const totalHours = projectsList.reduce((sum, p) => sum + (p.target_hours || 0), 0);
+                const hoursStatusEl = document.getElementById('hoursStatus');
+                if (totalHours === 168) {
+                    hoursStatusEl.textContent = 'All 168 hours assigned.';
+                } else if (totalHours > 168) {
+                    hoursStatusEl.textContent = `${totalHours - 168} hours over 168.`;
+                } else {
+                    hoursStatusEl.textContent = `${168 - totalHours} hours under 168.`;
+                }
             } catch (error) {
                 console.error('Error loading projects:', error);
                 document.getElementById('projectsList').innerHTML = '<p style="color: red;">Error loading projects.</p>';
