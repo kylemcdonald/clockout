@@ -245,6 +245,11 @@
 
     <script>
         let adminPassword = '';
+        let apiKeys = [];
+        let mutationQueue = [];
+        let mutationInFlight = null;
+        let nextTempKeyId = -1;
+        let adminSession = 0;
 
         function authenticate() {
             adminPassword = document.getElementById('adminPassword').value;
@@ -278,52 +283,137 @@
             document.getElementById('errorMessage').style.display = 'none';
         }
 
+        async function getResponseError(response, fallbackMessage) {
+            const errorData = await response.json().catch(() => ({}));
+            if (response.status === 401) {
+                return 'Invalid password';
+            }
+            return errorData.error || fallbackMessage;
+        }
+
+        async function requestJson(url, options, fallbackMessage) {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                throw new Error(await getResponseError(response, fallbackMessage));
+            }
+            return response.json().catch(() => null);
+        }
+
+        function renderApiKeys() {
+            const loadingMessage = document.getElementById('loadingMessage');
+            loadingMessage.style.display = 'none';
+
+            if (apiKeys.length === 0) {
+                document.getElementById('apiKeysList').innerHTML = '<p>No API keys found. Generate one to get started.</p>';
+                return;
+            }
+
+            const keysHtml = apiKeys.map(key => {
+                const createdDate = key.created_at ? new Date(key.created_at).toLocaleString() : 'Pending...';
+                const currentName = key.draftName ?? key.name ?? '';
+                const originalName = key.name || '';
+                const saveVisible = currentName !== originalName ? 'visible' : '';
+                return `
+                    <div class="api-key-item" data-key-id="${key.id}" style="${key.pending ? 'opacity: 0.7;' : ''}">
+                        <div class="api-key-info">
+                            <input type="text" class="api-key-name-input" value="${currentName}" placeholder="Unnamed key" data-original="${originalName}" oninput="onNameChange(${key.id}, this)">
+                            <div class="api-key-value">${key.api_key || 'Generating...'}</div>
+                            <div class="api-key-date">Created: ${createdDate}</div>
+                        </div>
+                        <div class="api-key-actions">
+                            <button class="save-name-btn ${saveVisible}" id="save-btn-${key.id}" onclick="saveKeyName(${key.id})">Save</button>
+                            <button class="delete-key-btn" onclick="deleteApiKey(${key.id})">Delete</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('apiKeysList').innerHTML = keysHtml;
+        }
+
+        function replaceTempKey(tempId, newKey) {
+            apiKeys = apiKeys.map(key => (
+                key.id === tempId
+                    ? {
+                        ...key,
+                        ...newKey,
+                        draftName: newKey.name || '',
+                        pending: false
+                    }
+                    : key
+            ));
+        }
+
+        function bufferMutation({ label, optimistic, send, reconcile }) {
+            try {
+                optimistic?.();
+                renderApiKeys();
+            } catch (error) {
+                showError(error.message || `Unable to queue ${label}.`);
+                return false;
+            }
+
+            mutationQueue.push({
+                label,
+                send,
+                reconcile,
+                sessionId: adminSession
+            });
+            processBufferedMutations();
+            return true;
+        }
+
+        async function processBufferedMutations() {
+            if (mutationInFlight || mutationQueue.length === 0) {
+                return;
+            }
+
+            const mutation = mutationQueue.shift();
+            mutationInFlight = mutation;
+
+            try {
+                const result = mutation.send ? await mutation.send() : null;
+                if (mutation.sessionId !== adminSession) {
+                    return;
+                }
+                mutation.reconcile?.(result);
+                renderApiKeys();
+            } catch (error) {
+                if (mutation.sessionId === adminSession) {
+                    console.error(`Admin mutation failed: ${mutation.label}`, error);
+                    mutationQueue = [];
+                    showError(`${mutation.label} failed: ${error.message}`);
+                    await loadApiKeys();
+                }
+            } finally {
+                if (mutationInFlight === mutation) {
+                    mutationInFlight = null;
+                }
+                processBufferedMutations();
+            }
+        }
+
         async function loadApiKeys() {
             document.getElementById('loadingMessage').style.display = 'block';
             document.getElementById('apiKeysList').innerHTML = '';
 
             try {
-                const response = await fetch('/api/admin/keys', {
+                const keys = await requestJson('/api/admin/keys', {
                     headers: getAdminHeaders()
-                });
+                }, 'Failed to load API keys');
 
-                if (response.status === 401) {
-                    throw new Error('Invalid password');
-                }
-
-                if (!response.ok) {
-                    throw new Error(`Failed to load API keys: ${response.status}`);
-                }
-
-                const keys = await response.json();
+                adminSession += 1;
+                mutationQueue = [];
+                mutationInFlight = null;
+                apiKeys = keys.map(key => ({
+                    ...key,
+                    draftName: key.name || '',
+                    pending: false
+                }));
                 document.getElementById('loadingMessage').style.display = 'none';
                 document.getElementById('passwordForm').style.display = 'none';
                 document.getElementById('adminContent').style.display = 'block';
-
-                if (keys.length === 0) {
-                    document.getElementById('apiKeysList').innerHTML = '<p>No API keys found. Generate one to get started.</p>';
-                    return;
-                }
-
-                const keysHtml = keys.map(key => {
-                    const createdDate = new Date(key.created_at).toLocaleString();
-                    const keyName = key.name || '';
-                    return `
-                        <div class="api-key-item" data-key-id="${key.id}">
-                            <div class="api-key-info">
-                                <input type="text" class="api-key-name-input" value="${keyName}" placeholder="Unnamed key" data-original="${keyName}" oninput="onNameChange(${key.id}, this)">
-                                <div class="api-key-value">${key.api_key}</div>
-                                <div class="api-key-date">Created: ${createdDate}</div>
-                            </div>
-                            <div class="api-key-actions">
-                                <button class="save-name-btn" id="save-btn-${key.id}" onclick="saveKeyName(${key.id})">Save</button>
-                                <button class="delete-key-btn" onclick="deleteApiKey(${key.id})">Delete</button>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-                document.getElementById('apiKeysList').innerHTML = keysHtml;
+                renderApiKeys();
                 showSuccess('API keys loaded successfully.');
             } catch (error) {
                 console.error('Error loading API keys:', error);
@@ -333,27 +423,32 @@
         }
 
         async function generateApiKey() {
-            try {
-                const response = await fetch('/api/admin/keys', {
+            const tempId = nextTempKeyId--;
+            const queued = bufferMutation({
+                label: 'Generating API key',
+                optimistic: () => {
+                    apiKeys.unshift({
+                        id: tempId,
+                        api_key: 'Generating...',
+                        name: null,
+                        draftName: '',
+                        created_at: new Date().toISOString(),
+                        pending: true
+                    });
+                },
+                send: () => requestJson('/api/admin/keys', {
                     method: 'POST',
                     headers: getAdminHeaders(),
                     body: JSON.stringify({})
-                });
-
-                if (response.status === 401) {
-                    throw new Error('Invalid password');
+                }, 'Failed to generate API key'),
+                reconcile: (newKey) => {
+                    replaceTempKey(tempId, newKey);
+                    showSuccess(`New API key generated: ${newKey.api_key}`);
                 }
+            });
 
-                if (!response.ok) {
-                    throw new Error('Failed to generate API key');
-                }
-
-                const newKey = await response.json();
-                showSuccess(`New API key generated: ${newKey.api_key}`);
-                loadApiKeys();
-            } catch (error) {
-                console.error('Error generating API key:', error);
-                showError(error.message);
+            if (queued) {
+                showSuccess('Generating API key...');
             }
         }
 
@@ -362,66 +457,56 @@
                 return;
             }
 
-            try {
-                const response = await fetch(`/api/admin/keys/${keyId}`, {
+            bufferMutation({
+                label: 'Deleting API key',
+                optimistic: () => {
+                    apiKeys = apiKeys.filter(key => key.id !== keyId);
+                },
+                send: () => requestJson(`/api/admin/keys/${keyId}`, {
                     method: 'DELETE',
                     headers: getAdminHeaders()
-                });
-
-                if (response.status === 401) {
-                    throw new Error('Invalid password');
+                }, 'Failed to delete API key'),
+                reconcile: () => {
+                    showSuccess('API key deleted successfully.');
                 }
-
-                if (!response.ok) {
-                    throw new Error('Failed to delete API key');
-                }
-
-                showSuccess('API key deleted successfully.');
-                loadApiKeys();
-            } catch (error) {
-                console.error('Error deleting API key:', error);
-                showError(error.message);
-            }
+            });
         }
 
         function onNameChange(keyId, input) {
-            const saveBtn = document.getElementById(`save-btn-${keyId}`);
-            if (input.value !== input.dataset.original) {
-                saveBtn.classList.add('visible');
-            } else {
-                saveBtn.classList.remove('visible');
+            const key = apiKeys.find(apiKey => apiKey.id === keyId);
+            if (key) {
+                key.draftName = input.value;
             }
+            const saveBtn = document.getElementById(`save-btn-${keyId}`);
+            if (!saveBtn) return;
+            saveBtn.classList.toggle('visible', input.value !== input.dataset.original);
         }
 
         async function saveKeyName(keyId) {
-            const item = document.querySelector(`[data-key-id="${keyId}"]`);
-            const input = item.querySelector('.api-key-name-input');
-            const newName = input.value.trim();
+            const key = apiKeys.find(apiKey => apiKey.id === keyId);
+            if (!key) return;
+            const newName = (key.draftName ?? '').trim();
 
-            try {
-                const response = await fetch(`/api/admin/keys/${keyId}`, {
+            bufferMutation({
+                label: 'Updating API key name',
+                optimistic: () => {
+                    const targetKey = apiKeys.find(apiKey => apiKey.id === keyId);
+                    if (!targetKey) {
+                        throw new Error('API key not found.');
+                    }
+                    targetKey.name = newName || null;
+                    targetKey.draftName = newName;
+                },
+                send: () => requestJson(`/api/admin/keys/${keyId}`, {
                     method: 'PUT',
                     headers: getAdminHeaders(),
                     body: JSON.stringify({ name: newName || null })
-                });
-
-                if (response.status === 401) {
-                    throw new Error('Invalid password');
+                }, 'Failed to update API key name'),
+                reconcile: () => {
+                    showSuccess('API key name updated.');
                 }
-
-                if (!response.ok) {
-                    throw new Error('Failed to update API key name');
-                }
-
-                input.dataset.original = newName;
-                document.getElementById(`save-btn-${keyId}`).classList.remove('visible');
-                showSuccess('API key name updated.');
-            } catch (error) {
-                console.error('Error updating API key name:', error);
-                showError(error.message);
-            }
+            });
         }
     </script>
 </body>
 </html>
-

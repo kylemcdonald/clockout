@@ -802,10 +802,22 @@
         let projectsRequestSeq = 0;
         let currentTaskRequestSeq = 0;
         let timeEntriesRequestSeq = 0;
+        let refreshRequestSeq = 0;
+        let mutationQueue = [];
+        let mutationInFlight = null;
+        let queuedServerRefresh = false;
+        let queuedServerRefreshPreservePage = false;
+        let nextTempEntryId = -1;
+        let nextTempProjectId = -1;
+        let frontendSession = 0;
+        let localStateVersion = 0;
+        const entryIdAliases = new Map();
+        const projectIdAliases = new Map();
         const TOTALS_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
         const DEFAULT_TITLE = 'Clock-Out';
         const GAP_TOLERANCE_ENTRY_MS = 1000; // 1 second tolerance for entry gaps
         const GAP_TOLERANCE_PRESENT_MS = 60000; // 60 seconds tolerance for gap to present
+        const PROJECT_COLORS = ['#f94144', '#f3722c', '#f8961e', '#f9844a', '#f9c74f', '#90be6d', '#43aa8b', '#4d908e', '#577590', '#277da1'];
 
         // History state
         let allEntries = [];
@@ -929,6 +941,480 @@
                 'Authorization': `Bearer ${apiToken}`,
                 'X-API-Key': apiToken
             };
+        }
+
+        function resolveAliasId(id, aliasMap) {
+            let resolved = id;
+            const seen = new Set();
+            while (aliasMap.has(resolved) && !seen.has(resolved)) {
+                seen.add(resolved);
+                resolved = aliasMap.get(resolved);
+            }
+            return resolved;
+        }
+
+        function resolveEntryId(entryId) {
+            return resolveAliasId(entryId, entryIdAliases);
+        }
+
+        function resolveProjectId(projectId) {
+            return resolveAliasId(projectId, projectIdAliases);
+        }
+
+        function updateTimeEntryDuration(entry) {
+            entry.duration = entry.stop
+                ? Math.floor((new Date(entry.stop) - new Date(entry.start)) / 1000)
+                : -1;
+            return entry;
+        }
+
+        function normalizeProject(project) {
+            return {
+                ...project,
+                id: Number(project.id),
+                target_hours: Number(project.target_hours),
+                color: project.color || '#D15540',
+                visible: project.visible === 0 ? 0 : 1
+            };
+        }
+
+        function normalizeEntry(entry) {
+            const normalized = {
+                ...entry,
+                id: Number(entry.id),
+                project_id: Number(entry.project_id),
+                start: new Date(entry.start).toISOString(),
+                stop: entry.stop ? new Date(entry.stop).toISOString() : null
+            };
+            return updateTimeEntryDuration(normalized);
+        }
+
+        function sortEntriesDescending() {
+            allEntries.sort((a, b) => {
+                const startDiff = new Date(b.start).getTime() - new Date(a.start).getTime();
+                if (startDiff !== 0) return startDiff;
+                return Number(resolveEntryId(b.id)) - Number(resolveEntryId(a.id));
+            });
+        }
+
+        function setProjectCollections(projectList) {
+            allProjects = projectList
+                .map(normalizeProject)
+                .sort((a, b) => b.target_hours - a.target_hours || a.name.localeCompare(b.name));
+
+            projects = allProjects
+                .filter(project => project.visible !== 0)
+                .map(project => ({
+                    id: project.id,
+                    name: project.name,
+                    targetTime: project.target_hours,
+                    color: project.color
+                }));
+
+            projectColors = {};
+            allProjects.forEach(project => {
+                projectColors[project.name] = project.color || '#D15540';
+            });
+        }
+
+        function findProjectById(projectId) {
+            const resolvedId = resolveProjectId(projectId);
+            return allProjects.find(project => project.id === resolvedId || project.id === projectId) || null;
+        }
+
+        function findEntryById(entryId) {
+            const resolvedId = resolveEntryId(entryId);
+            return allEntries.find(entry => entry.id === resolvedId || entry.id === entryId) || null;
+        }
+
+        function syncEntryNamesFromProjects() {
+            allEntries.forEach(entry => {
+                const project = findProjectById(entry.project_id);
+                if (project) {
+                    entry.project_id = project.id;
+                    entry.name = project.name;
+                }
+            });
+        }
+
+        function replaceProjectId(tempId, serverProject) {
+            const normalizedProject = normalizeProject(serverProject);
+            projectIdAliases.set(tempId, normalizedProject.id);
+            allProjects = allProjects.map(project => (
+                project.id === tempId
+                    ? { ...project, ...normalizedProject, pending: false }
+                    : project
+            ));
+            allEntries.forEach(entry => {
+                if (entry.project_id === tempId) {
+                    entry.project_id = normalizedProject.id;
+                    entry.name = normalizedProject.name;
+                }
+            });
+        }
+
+        function replaceEntryId(tempId, serverEntry) {
+            const normalizedEntry = normalizeEntry(serverEntry);
+            entryIdAliases.set(tempId, normalizedEntry.id);
+            allEntries = allEntries.map(entry => (
+                entry.id === tempId
+                    ? { ...entry, ...normalizedEntry, pending: false }
+                    : entry
+            ));
+
+            if (pendingEntryIdForProjectChange === tempId) {
+                pendingEntryIdForProjectChange = normalizedEntry.id;
+            }
+            if (currentTaskId === tempId) {
+                currentTaskId = normalizedEntry.id;
+            }
+
+            return normalizedEntry;
+        }
+
+        function syncCurrentTaskFromEntries() {
+            sortEntriesDescending();
+            const runningEntry = allEntries.find(entry => !entry.stop || entry.duration < 0) || null;
+
+            if (runningEntry) {
+                currentTaskId = runningEntry.id;
+                currentTaskName = runningEntry.name;
+                currentTaskStartTime = runningEntry.start ? new Date(runningEntry.start) : null;
+                if (currentTaskName && !(currentTaskName in cachedProjectTotals)) {
+                    cachedProjectTotals[currentTaskName] = 0;
+                }
+            } else {
+                currentTaskId = null;
+                currentTaskName = null;
+                currentTaskStartTime = null;
+            }
+
+            updateButtonStyles(currentTaskName);
+            updateDocumentTitle();
+        }
+
+        function recomputeTotalsFromEntries() {
+            const now = new Date();
+            const windowStart = new Date(now.getTime() - 168 * 60 * 60 * 1000);
+            const todayMidnight = new Date(now);
+            todayMidnight.setHours(0, 0, 0, 0);
+            const dayBoundaries = [];
+            for (let i = 6; i >= 0; i--) {
+                const dayStart = new Date(todayMidnight.getTime() - i * 24 * 60 * 60 * 1000);
+                const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+                dayBoundaries.push({ start: dayStart, end: dayEnd, index: 6 - i });
+            }
+
+            let totalHours = 0;
+            const projectTimes = {};
+            const projectDays = {};
+
+            allEntries.forEach(entry => {
+                const start = new Date(entry.start);
+                const end = entry.stop ? new Date(entry.stop) : now;
+                const effectiveStart = start < windowStart ? windowStart : start;
+                const durationMs = Math.max(0, end.getTime() - effectiveStart.getTime());
+                if (durationMs === 0) return;
+
+                const durationHours = durationMs / 3600000;
+                totalHours += durationHours;
+
+                const projectName = entry.name;
+                if (!projectName) return;
+
+                projectTimes[projectName] = (projectTimes[projectName] || 0) + durationHours;
+                if (!projectDays[projectName]) {
+                    projectDays[projectName] = new Set();
+                }
+
+                dayBoundaries.forEach(day => {
+                    if (start < day.end && end > day.start) {
+                        projectDays[projectName].add(day.index);
+                    }
+                });
+            });
+
+            cachedProjectTotals = projectTimes;
+            cachedProjectDays = {};
+            for (const projectName in projectDays) {
+                cachedProjectDays[projectName] = Array.from({ length: 7 }, (_, index) => projectDays[projectName].has(index));
+            }
+            cachedTotalHours = totalHours;
+            totalsLastUpdatedAt = Date.now();
+            if (currentTaskStartTime) {
+                currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
+            } else {
+                currentTaskElapsedAtLastUpdateHours = 0;
+            }
+
+            renderTotalsFromCache();
+        }
+
+        function rebuildHistoryState(preservePage = false) {
+            const savedPage = preservePage ? currentPage : null;
+            const datesSet = new Set();
+            allEntries.forEach(entry => datesSet.add(formatDate(entry.start)));
+            const uniqueDatesWithEntries = Array.from(datesSet).sort((a, b) => new Date(b) - new Date(a));
+            allUniqueDates = generateDisplayDates(uniqueDatesWithEntries);
+
+            if (preservePage && savedPage !== null) {
+                const totalPages = Math.ceil(allUniqueDates.length / 7);
+                currentPage = Math.min(savedPage, Math.max(totalPages, 1));
+                if (currentPage < 1) currentPage = 1;
+            } else {
+                currentPage = 1;
+            }
+        }
+
+        function updateTimeAdjustmentButtons() {
+            document.querySelectorAll('.time-adjust-nav button').forEach(button => {
+                button.disabled = addTimeInFlight;
+            });
+        }
+
+        function applyLocalStateChanges({ projectsChanged = false, entriesChanged = false, preservePage = true } = {}) {
+            if (projectsChanged) {
+                setProjectCollections(allProjects);
+                syncEntryNamesFromProjects();
+                generateTaskContainers();
+                loadProjectsList();
+                if (document.getElementById('projectModal').classList.contains('visible')) {
+                    showProjectModal();
+                }
+            }
+
+            if (entriesChanged || projectsChanged) {
+                allEntries = allEntries.map(updateTimeEntryDuration);
+                sortEntriesDescending();
+                syncCurrentTaskFromEntries();
+                recomputeTotalsFromEntries();
+                rebuildHistoryState(preservePage);
+                document.getElementById('loadingMessage').style.display = 'none';
+                if (apiToken) {
+                    document.getElementById('errorMessage').style.display = 'none';
+                }
+                renderEntries();
+            } else {
+                syncCurrentTaskFromEntries();
+                recomputeTotalsFromEntries();
+            }
+
+            updateWelcomeMessage();
+            updateTimeAdjustmentButtons();
+        }
+
+        function hasPendingBufferedMutations() {
+            return mutationInFlight !== null || mutationQueue.length > 0;
+        }
+
+        function resetBufferedMutations() {
+            mutationQueue = [];
+            mutationInFlight = null;
+            queuedServerRefresh = false;
+            queuedServerRefreshPreservePage = false;
+            entryIdAliases.clear();
+            projectIdAliases.clear();
+            nextTempEntryId = -1;
+            nextTempProjectId = -1;
+            frontendSession += 1;
+            localStateVersion += 1;
+            addTimeInFlight = false;
+            updateTimeAdjustmentButtons();
+        }
+
+        async function getResponseError(response, fallbackMessage) {
+            const errorData = await response.json().catch(() => ({}));
+            return errorData.error || fallbackMessage;
+        }
+
+        async function requestJson(url, options, fallbackMessage) {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                throw new Error(await getResponseError(response, fallbackMessage));
+            }
+
+            if (response.status === 204) {
+                return null;
+            }
+
+            return response.json().catch(() => null);
+        }
+
+        function queueServerRefresh(preservePage = true) {
+            queuedServerRefresh = true;
+            queuedServerRefreshPreservePage = queuedServerRefreshPreservePage || preservePage;
+            if (!hasPendingBufferedMutations()) {
+                flushQueuedServerRefresh();
+            }
+        }
+
+        async function flushQueuedServerRefresh() {
+            if (!queuedServerRefresh || hasPendingBufferedMutations()) {
+                return;
+            }
+
+            const preservePage = queuedServerRefreshPreservePage;
+            queuedServerRefresh = false;
+            queuedServerRefreshPreservePage = false;
+            await refreshFromServer(preservePage);
+        }
+
+        async function processBufferedMutations() {
+            if (mutationInFlight || mutationQueue.length === 0) {
+                if (!mutationInFlight) {
+                    flushQueuedServerRefresh();
+                }
+                return;
+            }
+
+            const mutation = mutationQueue.shift();
+            mutationInFlight = mutation;
+
+            try {
+                const result = mutation.send ? await mutation.send() : null;
+                if (mutation.sessionId !== frontendSession) {
+                    mutation.onSettled?.({ ok: false, cancelled: true });
+                    return;
+                }
+
+                const reconcileFlags = mutation.reconcile ? (mutation.reconcile(result) || {}) : {};
+                if (reconcileFlags.projectsChanged || reconcileFlags.entriesChanged) {
+                    applyLocalStateChanges({
+                        projectsChanged: Boolean(reconcileFlags.projectsChanged),
+                        entriesChanged: Boolean(reconcileFlags.entriesChanged),
+                        preservePage: mutation.preservePage
+                    });
+                }
+
+                mutation.onSettled?.({ ok: true, result });
+                queueServerRefresh(mutation.preservePage);
+            } catch (error) {
+                if (mutation.sessionId === frontendSession) {
+                    console.error(`Buffered mutation failed: ${mutation.label}`, error);
+                    const cancelledMutations = mutationQueue.splice(0, mutationQueue.length);
+                    mutation.onSettled?.({ ok: false, error });
+                    cancelledMutations.forEach(queuedMutation => {
+                        queuedMutation.onSettled?.({ ok: false, cancelled: true, error });
+                    });
+                    alert(`${mutation.label} failed to sync: ${error.message}. Reloading from the backend.`);
+                    await refreshFromServer(mutation.preservePage);
+                } else {
+                    mutation.onSettled?.({ ok: false, cancelled: true, error });
+                }
+            } finally {
+                if (mutationInFlight === mutation) {
+                    mutationInFlight = null;
+                }
+                updateTimeAdjustmentButtons();
+                processBufferedMutations();
+            }
+        }
+
+        function bufferMutation({ label, preservePage = true, optimistic, send, reconcile, onSettled }) {
+            let optimisticFlags = { projectsChanged: false, entriesChanged: false };
+            try {
+                optimisticFlags = { ...optimisticFlags, ...(optimistic ? (optimistic() || {}) : {}) };
+            } catch (error) {
+                alert(error.message || `Unable to queue ${label}.`);
+                return false;
+            }
+
+            localStateVersion += 1;
+            applyLocalStateChanges({
+                projectsChanged: Boolean(optimisticFlags.projectsChanged),
+                entriesChanged: Boolean(optimisticFlags.entriesChanged),
+                preservePage
+            });
+
+            mutationQueue.push({
+                label,
+                preservePage,
+                send,
+                reconcile,
+                onSettled,
+                sessionId: frontendSession
+            });
+            processBufferedMutations();
+            return true;
+        }
+
+        function clearLocalData() {
+            projects = [];
+            projectColors = {};
+            allProjects = [];
+            allEntries = [];
+            currentTaskId = null;
+            currentTaskStartTime = null;
+            currentTaskName = null;
+            cachedProjectTotals = {};
+            cachedProjectDays = {};
+            cachedTotalHours = 0;
+            totalsLastUpdatedAt = null;
+            currentTaskElapsedAtLastUpdateHours = 0;
+            currentPage = 1;
+            allUniqueDates = [];
+            expandedDays = new Set();
+        }
+
+        async function refreshFromServer(preservePage = false) {
+            if (!apiToken) {
+                clearLocalData();
+                applyLocalStateChanges({ projectsChanged: true, entriesChanged: true, preservePage });
+                document.getElementById('loadingMessage').style.display = 'none';
+                document.getElementById('errorMessage').style.display = 'block';
+                document.getElementById('errorMessage').textContent = 'No API key found. Please add one in Settings.';
+                document.getElementById('errorMessage').className = 'error';
+                return;
+            }
+
+            const requestSeq = ++refreshRequestSeq;
+            const expectedVersion = localStateVersion;
+
+            if (allEntries.length === 0) {
+                document.getElementById('loadingMessage').style.display = 'block';
+            }
+
+            try {
+                const [projectsResponse, entriesResponse] = await Promise.all([
+                    fetch('/api/projects?include_hidden=true', { headers: getApiHeaders() }),
+                    fetch('/api/time-entries?all=true', { headers: getApiHeaders() })
+                ]);
+
+                if (requestSeq !== refreshRequestSeq) return;
+
+                if (!projectsResponse.ok) {
+                    throw new Error(await getResponseError(projectsResponse, 'Failed to load projects'));
+                }
+                if (!entriesResponse.ok) {
+                    throw new Error(await getResponseError(entriesResponse, 'Failed to load time entries'));
+                }
+
+                const [projectData, entryData] = await Promise.all([
+                    projectsResponse.json(),
+                    entriesResponse.json()
+                ]);
+
+                if (requestSeq !== refreshRequestSeq) return;
+
+                if (expectedVersion !== localStateVersion || hasPendingBufferedMutations()) {
+                    queueServerRefresh(preservePage);
+                    return;
+                }
+
+                allProjects = projectData.map(normalizeProject);
+                allEntries = entryData.map(normalizeEntry);
+                applyLocalStateChanges({ projectsChanged: true, entriesChanged: true, preservePage });
+            } catch (error) {
+                console.error('Error refreshing data:', error);
+                document.getElementById('loadingMessage').style.display = 'none';
+                document.getElementById('errorMessage').style.display = 'block';
+                document.getElementById('errorMessage').textContent = error.message;
+                document.getElementById('errorMessage').className = 'error';
+                if (allEntries.length === 0 && allProjects.length === 0) {
+                    clearLocalData();
+                    applyLocalStateChanges({ projectsChanged: true, entriesChanged: true, preservePage });
+                }
+            }
         }
 
         function formatElapsedDuration(durationSeconds) {
@@ -1080,54 +1566,7 @@
         }
 
         async function fetchProjects() {
-            if (!apiToken) {
-                projects = [];
-                allProjects = [];
-                projectColors = {};
-                generateTaskContainers();
-                return;
-            }
-            if (projectsFetchInFlight) {
-                projectsFetchRequested = true;
-                return;
-            }
-            projectsFetchInFlight = true;
-            projectsFetchRequested = false;
-            const requestSeq = ++projectsRequestSeq;
-            try {
-                const response = await fetch('/api/projects', { headers: getApiHeaders() });
-                // Check sequence immediately after network request completes
-                if (requestSeq !== projectsRequestSeq) return;
-                if (!response.ok) throw new Error('Failed to fetch');
-                const data = await response.json();
-                // Check again after JSON parsing
-                if (requestSeq !== projectsRequestSeq) return;
-                projects = data.map(p => ({
-                    id: p.id,
-                    name: p.name,
-                    targetTime: p.target_hours,
-                    color: p.color || '#D15540'
-                })).sort((a, b) => b.targetTime - a.targetTime);
-                projectColors = {};
-                data.forEach(p => { projectColors[p.name] = p.color || '#D15540'; });
-                allProjects = data;
-                generateTaskContainers();
-                await getCurrentTask();
-                await updateTotals();
-            } catch (error) {
-                if (requestSeq !== projectsRequestSeq) return;
-                console.error('Error fetching projects:', error);
-                projects = [];
-                allProjects = [];
-                projectColors = {};
-                generateTaskContainers();
-            } finally {
-                projectsFetchInFlight = false;
-                if (projectsFetchRequested) {
-                    projectsFetchRequested = false;
-                    fetchProjects();
-                }
-            }
+            await refreshFromServer(false);
         }
 
         function generateTaskContainers() {
@@ -1169,162 +1608,82 @@
         }
 
         async function getCurrentTask() {
-            const requestSeq = ++currentTaskRequestSeq;
-            if (!apiToken) {
-                currentTaskId = null;
-                currentTaskName = null;
-                currentTaskStartTime = null;
-                updateButtonStyles(null);
-                renderTotalsFromCache();
-                updateDocumentTitle();
-                return;
-            }
-            try {
-                const response = await fetch('/api/time-entries/current', { headers: getApiHeaders() });
-                // Check sequence immediately after network request completes
-                if (requestSeq !== currentTaskRequestSeq) return;
-                if (!response.ok) throw new Error('Failed');
-                const data = await response.json();
-                // Check again after JSON parsing
-                if (requestSeq !== currentTaskRequestSeq) return;
-                if (data && data.id) {
-                    currentTaskId = data.id;
-                    currentTaskName = data.name;
-                    currentTaskStartTime = data.start ? new Date(data.start) : null;
-                    if (currentTaskStartTime && totalsLastUpdatedAt) {
-                        currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
-                    }
-                    if (currentTaskName && !(currentTaskName in cachedProjectTotals)) {
-                        cachedProjectTotals[currentTaskName] = 0;
-                    }
-                    updateButtonStyles(currentTaskName);
-                } else {
-                    currentTaskId = null;
-                    currentTaskName = null;
-                    currentTaskStartTime = null;
-                    updateButtonStyles(null);
-                }
-                renderTotalsFromCache();
-                updateDocumentTitle();
-            } catch (error) {
-                if (requestSeq !== currentTaskRequestSeq) return;
-                console.error('Error getting current task:', error);
-                currentTaskId = null;
-                currentTaskName = null;
-                currentTaskStartTime = null;
-                updateButtonStyles(null);
-                renderTotalsFromCache();
-                updateDocumentTitle();
-            }
+            syncCurrentTaskFromEntries();
         }
 
         async function updateTotals() {
-            if (!apiToken) return;
-            if (totalsUpdateInFlight) {
-                totalsRefreshRequested = true;
-                return;
-            }
-            totalsUpdateInFlight = true;
-            totalsRefreshRequested = false;
-            try {
-                const response = await fetch('/api/time-entries', { headers: getApiHeaders() });
-                if (!response.ok) throw new Error('Failed');
-                const timeEntries = await response.json();
-                let totalHours = 0;
-                let projectTimes = {};
-                let projectDays = {};
-                const now = new Date();
-                const windowStart = new Date(now.getTime() - 168 * 60 * 60 * 1000);
-                const todayMidnight = new Date(now);
-                todayMidnight.setHours(0, 0, 0, 0);
-                const dayBoundaries = [];
-                for (let i = 6; i >= 0; i--) {
-                    const dayStart = new Date(todayMidnight.getTime() - i * 24 * 60 * 60 * 1000);
-                    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-                    dayBoundaries.push({ start: dayStart, end: dayEnd, index: 6 - i });
-                }
-                timeEntries.forEach(entry => {
-                    const start = new Date(entry.start);
-                    const end = entry.duration < 0 ? now : new Date(entry.stop);
-                    const effectiveStart = start < windowStart ? windowStart : start;
-                    const durationMs = Math.max(0, end.getTime() - effectiveStart.getTime());
-                    const durationHours = durationMs / 3600000;
-                    totalHours += durationHours;
-                    const projectName = entry.name;
-                    if (projectName) {
-                        projectTimes[projectName] = (projectTimes[projectName] || 0) + durationHours;
-                        if (!projectDays[projectName]) projectDays[projectName] = new Set();
-                        dayBoundaries.forEach(day => {
-                            if (start < day.end && end > day.start) projectDays[projectName].add(day.index);
-                        });
-                    }
-                });
-                cachedProjectTotals = projectTimes;
-                cachedProjectDays = {};
-                for (const pn in projectDays) {
-                    cachedProjectDays[pn] = Array.from({ length: 7 }, (_, i) => projectDays[pn].has(i));
-                }
-                cachedTotalHours = totalHours;
-                totalsLastUpdatedAt = Date.now();
-                if (currentTaskStartTime) {
-                    currentTaskElapsedAtLastUpdateHours = Math.max(0, (totalsLastUpdatedAt - currentTaskStartTime.getTime()) / 3600000);
-                }
-                renderTotalsFromCache();
-            } catch (error) {
-                console.error('Error updating totals:', error);
-            } finally {
-                totalsUpdateInFlight = false;
-                if (totalsRefreshRequested) {
-                    totalsRefreshRequested = false;
-                    updateTotals();
-                }
-            }
+            recomputeTotalsFromEntries();
         }
 
         async function startTask(projectId, projectName) {
             if (!apiToken) { alert('Please enter an API key in settings first.'); return; }
             if (currentTaskId && currentTaskName === projectName) {
-                await stopCurrentTask();
+                stopCurrentTask();
                 return;
             }
-            try {
-                const response = await fetch('/api/time-entries', {
+            const project = findProjectById(projectId);
+            if (!project) {
+                alert('Project not found.');
+                return;
+            }
+
+            const startTime = new Date().toISOString();
+            const tempEntryId = nextTempEntryId--;
+            bufferMutation({
+                label: `Starting ${project.name}`,
+                optimistic: () => {
+                    allEntries.forEach(entry => {
+                        if (!entry.stop || entry.duration < 0) {
+                            entry.stop = startTime;
+                            updateTimeEntryDuration(entry);
+                        }
+                    });
+                    allEntries.unshift(updateTimeEntryDuration({
+                        id: tempEntryId,
+                        project_id: project.id,
+                        start: startTime,
+                        stop: null,
+                        name: project.name,
+                        pending: true
+                    }));
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson('/api/time-entries', {
                     method: 'POST',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ project_id: projectId })
-                });
-                if (!response.ok) throw new Error('Failed');
-                const data = await response.json();
-                currentTaskId = data.id;
-                currentTaskName = projectName;
-                currentTaskStartTime = data.start ? new Date(data.start) : new Date();
-                if (!(projectName in cachedProjectTotals)) cachedProjectTotals[projectName] = 0;
-                renderTotalsFromCache();
-                updateButtonStyles(projectName);
-                updateDocumentTitle();
-            } catch (error) {
-                console.error('Error starting task:', error);
-                alert('Error starting task.');
-            }
+                    body: JSON.stringify({ project_id: resolveProjectId(projectId) })
+                }, 'Failed to start task'),
+                reconcile: (data) => {
+                    if (data && data.id) {
+                        replaceEntryId(tempEntryId, data);
+                    }
+                    return { entriesChanged: true };
+                }
+            });
         }
 
         async function stopCurrentTask() {
             if (!apiToken || !currentTaskId) return;
-            try {
-                const response = await fetch(`/api/time-entries/${currentTaskId}/stop`, {
+            const runningEntry = findEntryById(currentTaskId);
+            if (!runningEntry) return;
+
+            const endTime = new Date().toISOString();
+            const entryId = runningEntry.id;
+            bufferMutation({
+                label: `Stopping ${runningEntry.name || 'task'}`,
+                optimistic: () => {
+                    const entry = findEntryById(entryId);
+                    if (entry) {
+                        entry.stop = endTime;
+                        updateTimeEntryDuration(entry);
+                    }
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson(`/api/time-entries/${resolveEntryId(entryId)}/stop`, {
                     method: 'PATCH',
                     headers: getApiHeaders()
-                });
-                if (!response.ok) throw new Error('Failed');
-                currentTaskId = null;
-                currentTaskName = null;
-                currentTaskStartTime = null;
-                renderTotalsFromCache();
-                updateButtonStyles(null);
-                updateDocumentTitle();
-            } catch (error) {
-                console.error('Error stopping task:', error);
-            }
+                }, 'Failed to stop task')
+            });
         }
 
         function updateButtonStyles(activeTask) {
@@ -1335,63 +1694,103 @@
         }
 
         async function fetchRecentEntries() {
-            if (!apiToken) return [];
-            try {
-                const response = await fetch('/api/time-entries?all=true', { headers: getApiHeaders() });
-                if (!response.ok) return [];
-                return await response.json();
-            } catch { return []; }
+            return apiToken ? [...allEntries] : [];
         }
 
         async function addTimeToCurrentTask(minutes) {
             if (!apiToken) { alert('Please enter an API key in settings first.'); return; }
-            if (addTimeInFlight) return; // Prevent concurrent requests
+            if (addTimeInFlight) return;
+
+            const entries = await fetchRecentEntries();
+            if (entries.length === 0) { alert('No time entries found.'); return; }
+
+            const currentEntry = findEntryById(entries[0].id);
+            if (!currentEntry) { alert('No time entries found.'); return; }
+
+            const currentStartTime = new Date(currentEntry.start);
+            const previousEntry = entries.find(entry =>
+                entry.id !== currentEntry.id &&
+                entry.stop &&
+                Math.abs(new Date(entry.stop).getTime() - currentStartTime.getTime()) < 1000
+            );
+            const previousLocalEntry = previousEntry ? findEntryById(previousEntry.id) : null;
+            const shiftMs = Math.round(minutes * 60 * 1000);
+            const newStartTime = new Date(currentStartTime.getTime() - shiftMs).toISOString();
+
+            if (currentEntry.stop && new Date(newStartTime) >= new Date(currentEntry.stop)) {
+                alert('Shift would make the current entry invalid.');
+                return;
+            }
+
+            let newPreviousEndTime = null;
+            if (previousLocalEntry) {
+                newPreviousEndTime = new Date(new Date(previousLocalEntry.stop).getTime() - shiftMs).toISOString();
+                if (new Date(previousLocalEntry.start) >= new Date(newPreviousEndTime)) {
+                    alert('Shift would make the linked previous entry invalid.');
+                    return;
+                }
+            }
+
             addTimeInFlight = true;
-            try {
-                const entries = await fetchRecentEntries();
-                if (entries.length === 0) { alert('No time entries found.'); return; }
-                const currentEntry = entries[0];
-                const currentStartTime = new Date(currentEntry.start);
-                // Find the previous entry whose stop time matches (within 1 second) the current entry's start time
-                const previousEntry = entries.find(e =>
-                    e.id !== currentEntry.id &&
-                    e.stop &&
-                    Math.abs(new Date(e.stop).getTime() - currentStartTime.getTime()) < 1000
-                );
-                const response = await fetch(`/api/time-entries/${currentEntry.id}/shift-start`, {
+            updateTimeAdjustmentButtons();
+
+            const queued = bufferMutation({
+                label: `Adding ${minutes} minutes`,
+                optimistic: () => {
+                    const optimisticCurrentEntry = findEntryById(currentEntry.id);
+                    if (!optimisticCurrentEntry) {
+                        throw new Error('Current entry not found.');
+                    }
+
+                    optimisticCurrentEntry.start = newStartTime;
+                    updateTimeEntryDuration(optimisticCurrentEntry);
+
+                    if (previousLocalEntry && newPreviousEndTime) {
+                        const optimisticPreviousEntry = findEntryById(previousLocalEntry.id);
+                        if (optimisticPreviousEntry) {
+                            optimisticPreviousEntry.stop = newPreviousEndTime;
+                            updateTimeEntryDuration(optimisticPreviousEntry);
+                        }
+                    }
+
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson(`/api/time-entries/${resolveEntryId(currentEntry.id)}/shift-start`, {
                     method: 'PATCH',
                     headers: getApiHeaders(),
                     body: JSON.stringify({
                         minutes,
-                        previous_entry_id: previousEntry ? previousEntry.id : null
+                        previous_entry_id: previousLocalEntry ? resolveEntryId(previousLocalEntry.id) : null
                     })
-                });
-                if (!response.ok) {
-                    throw new Error(`Failed to shift entry: ${response.status}`);
+                }, 'Failed to shift entry'),
+                reconcile: (data) => {
+                    const syncedCurrentEntry = findEntryById(currentEntry.id);
+                    if (syncedCurrentEntry && data && data.start_time) {
+                        syncedCurrentEntry.start = new Date(data.start_time).toISOString();
+                        updateTimeEntryDuration(syncedCurrentEntry);
+                    }
+                    return { entriesChanged: true };
+                },
+                onSettled: () => {
+                    addTimeInFlight = false;
+                    updateTimeAdjustmentButtons();
                 }
-                await updateTotals();
-            } catch (error) {
-                console.error('Error adding time:', error);
-                alert(`Error adding time: ${error.message}`);
-            } finally {
+            });
+
+            if (!queued) {
                 addTimeInFlight = false;
+                updateTimeAdjustmentButtons();
             }
         }
 
         async function addTenMinutes() {
-            document.getElementById('addTenButton').disabled = true;
-            await addTimeToCurrentTask(10);
-            document.getElementById('addTenButton').disabled = false;
+            addTimeToCurrentTask(10);
         }
         async function addThirtyMinutes() {
-            document.getElementById('addThirtyButton').disabled = true;
-            await addTimeToCurrentTask(30);
-            document.getElementById('addThirtyButton').disabled = false;
+            addTimeToCurrentTask(30);
         }
         async function addOneHour() {
-            document.getElementById('addHourButton').disabled = true;
-            await addTimeToCurrentTask(60);
-            document.getElementById('addHourButton').disabled = false;
+            addTimeToCurrentTask(60);
         }
 
         // ============ HISTORY PANE LOGIC ============
@@ -1412,61 +1811,7 @@
         }
 
         async function loadTimeEntries(preservePage = false) {
-            if (!apiToken) {
-                document.getElementById('loadingMessage').style.display = 'none';
-                document.getElementById('errorMessage').style.display = 'block';
-                document.getElementById('errorMessage').textContent = 'No API key found. Please add one in Settings.';
-                document.getElementById('errorMessage').className = 'error';
-                return;
-            }
-            if (timeEntriesFetchInFlight) {
-                timeEntriesFetchRequested = true;
-                // Preserve page if any request wanted to preserve it
-                timeEntriesPreservePage = timeEntriesPreservePage || preservePage;
-                return;
-            }
-            timeEntriesFetchInFlight = true;
-            timeEntriesFetchRequested = false;
-            const requestSeq = ++timeEntriesRequestSeq;
-            const savedPage = preservePage ? currentPage : null;
-            try {
-                const response = await fetch('/api/time-entries?all=true', { headers: getApiHeaders() });
-                // Check sequence immediately after network request completes
-                if (requestSeq !== timeEntriesRequestSeq) return;
-                if (!response.ok) throw new Error('Failed to load');
-                const entries = await response.json();
-                // Check again after JSON parsing
-                if (requestSeq !== timeEntriesRequestSeq) return;
-                document.getElementById('loadingMessage').style.display = 'none';
-                allEntries = entries;
-                const datesSet = new Set();
-                allEntries.forEach(entry => datesSet.add(formatDate(entry.start)));
-                const uniqueDatesWithEntries = Array.from(datesSet).sort((a, b) => new Date(b) - new Date(a));
-                allUniqueDates = generateDisplayDates(uniqueDatesWithEntries);
-                if (preservePage && savedPage !== null) {
-                    const totalPages = Math.ceil(allUniqueDates.length / 7);
-                    currentPage = Math.min(savedPage, totalPages);
-                    if (currentPage < 1) currentPage = 1;
-                } else {
-                    currentPage = 1;
-                }
-                renderEntries();
-            } catch (error) {
-                if (requestSeq !== timeEntriesRequestSeq) return;
-                console.error('Error loading entries:', error);
-                document.getElementById('loadingMessage').style.display = 'none';
-                document.getElementById('errorMessage').style.display = 'block';
-                document.getElementById('errorMessage').textContent = error.message;
-                document.getElementById('errorMessage').className = 'error';
-            } finally {
-                timeEntriesFetchInFlight = false;
-                if (timeEntriesFetchRequested) {
-                    const shouldPreservePage = timeEntriesPreservePage;
-                    timeEntriesFetchRequested = false;
-                    timeEntriesPreservePage = false;
-                    loadTimeEntries(shouldPreservePage);
-                }
-            }
+            await refreshFromServer(preservePage);
         }
 
         function renderTimeEntry(entry, isCrossDay = false) {
@@ -1518,6 +1863,11 @@
             `;
         }
 
+        function getExtendLabel(entryId, fallbackLabel) {
+            const entry = allEntries.find(e => e.id === entryId);
+            return entry && entry.name ? `extend ${entry.name}` : fallbackLabel;
+        }
+
         function renderUntrackedTimeEntry(gapStartTime, gapEndTime, previousEntryId, nextEntryId, fillStartTime, fillEndTime) {
             // fillStartTime/fillEndTime are the actual times to fill when clicking (for cross-midnight gaps)
             // If not provided, use the display gap times
@@ -1533,9 +1883,11 @@
             const gapDateKey = formatDate(gapStartTime);
             const isPrevDay = fillDateKey !== gapDateKey;
             const startTimeDisplay = isPrevDay ? `${startTime} (prev. day)` : startTime;
-            // Only show "Extend Above" button if there's a next entry to extend
+            const extendAboveLabel = getExtendLabel(nextEntryId, 'extend above');
+            const extendBelowLabel = getExtendLabel(previousEntryId, 'extend below');
+            // Only show an above-extension button if there's a next entry to extend
             const extendAboveButton = nextEntryId !== null
-                ? `<button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">Extend Above</button>`
+                ? `<button class="extend-button" onclick="extendAbove(${previousEntryId}, ${nextEntryId}, '${gapStartTime}')">${extendAboveLabel}</button>`
                 : '';
             return `
                 <div class="time-entry" style="--visualization-color: #666666; --visualization-width: ${widthPercentage}%; opacity: 0.7;">
@@ -1544,7 +1896,7 @@
                         <div>
                             <span class="duration">${duration}</span>
                             ${extendAboveButton}
-                            <button class="extend-button" onclick="extendBelow(${previousEntryId}, ${nextEntryId}, '${gapEndTime}')">Extend Below</button>
+                            <button class="extend-button" onclick="extendBelow(${previousEntryId}, ${nextEntryId}, '${gapEndTime}')">${extendBelowLabel}</button>
                         </div>
                     </div>
                     <div class="time-range">${startTimeDisplay}</div>
@@ -1896,15 +2248,17 @@
 
         async function deleteTimeEntry(entryId) {
             if (!confirm('Delete this time entry?')) return;
-            try {
-                const response = await fetch(`/api/time-entries/${entryId}`, { method: 'DELETE', headers: getApiHeaders() });
-                if (!response.ok) throw new Error('Failed');
-                allEntries = allEntries.filter(e => e.id !== entryId);
-                renderEntries();
-            } catch (error) {
-                console.error('Error deleting:', error);
-                alert('Error deleting entry.');
-            }
+            bufferMutation({
+                label: 'Deleting entry',
+                optimistic: () => {
+                    allEntries = allEntries.filter(entry => entry.id !== entryId);
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson(`/api/time-entries/${resolveEntryId(entryId)}`, {
+                    method: 'DELETE',
+                    headers: getApiHeaders()
+                }, 'Failed to delete entry')
+            });
         }
 
         function editTimeEntry(entryId) {
@@ -1930,79 +2284,138 @@
                 alert('Start time must be before end time (duration cannot be zero or negative)');
                 return;
             }
-            try {
-                // Find this entry and its neighbors in allEntries (sorted by start time descending)
-                const entryIndex = allEntries.findIndex(e => e.id === entryId);
-                const currentEntry = allEntries[entryIndex];
-                if (!currentEntry) throw new Error('Entry not found in local state');
-                const previousEntry = entryIndex > 0 ? allEntries[entryIndex - 1] : null; // More recent (later in time)
-                const nextEntry = entryIndex < allEntries.length - 1 ? allEntries[entryIndex + 1] : null; // Older (earlier in time)
+            const entryIndex = allEntries.findIndex(entry => entry.id === entryId);
+            const currentEntry = allEntries[entryIndex];
+            if (!currentEntry) {
+                alert('Entry not found.');
+                return;
+            }
 
-                const originalStartInput = formatDateTimeForInput(currentEntry.start);
-                const originalEndInput = currentEntry.stop ? formatDateTimeForInput(currentEntry.stop) : '';
-                const startChanged = startTime !== originalStartInput;
-                const endChanged = endTime !== originalEndInput;
+            const previousEntry = entryIndex > 0 ? allEntries[entryIndex - 1] : null;
+            const nextEntry = entryIndex < allEntries.length - 1 ? allEntries[entryIndex + 1] : null;
+            const originalStartInput = formatDateTimeForInput(currentEntry.start);
+            const originalEndInput = currentEntry.stop ? formatDateTimeForInput(currentEntry.stop) : '';
+            const startChanged = startTime !== originalStartInput;
+            const endChanged = endTime !== originalEndInput;
 
-                const newStartTime = startChanged ? new Date(startTime).toISOString() : currentEntry.start;
-                const newEndTime = endTime
-                    ? (endChanged ? new Date(endTime).toISOString() : currentEntry.stop)
-                    : null;
-                const response = await fetch(`/api/time-entries/${entryId}/edit-linked`, {
+            if (!startChanged && !endChanged) {
+                cancelEdit(entryId);
+                return;
+            }
+
+            const newStartTime = startChanged ? new Date(startTime).toISOString() : currentEntry.start;
+            const newEndTime = endTime
+                ? (endChanged ? new Date(endTime).toISOString() : currentEntry.stop)
+                : null;
+            const linkedNextEntryId = nextEntry && nextEntry.stop && startChanged ? nextEntry.id : null;
+            const linkedPreviousEntryId = previousEntry && newEndTime && endChanged ? previousEntry.id : null;
+
+            if (linkedNextEntryId && new Date(nextEntry.start) >= new Date(newStartTime)) {
+                alert('Linked next entry would become invalid.');
+                return;
+            }
+            if (linkedPreviousEntryId && previousEntry.stop && new Date(newEndTime) >= new Date(previousEntry.stop)) {
+                alert('Linked previous entry would become invalid.');
+                return;
+            }
+
+            const queued = bufferMutation({
+                label: 'Saving entry',
+                optimistic: () => {
+                    const optimisticCurrentEntry = findEntryById(entryId);
+                    if (!optimisticCurrentEntry) {
+                        throw new Error('Entry not found.');
+                    }
+
+                    optimisticCurrentEntry.start = newStartTime;
+                    optimisticCurrentEntry.stop = newEndTime;
+                    updateTimeEntryDuration(optimisticCurrentEntry);
+
+                    if (linkedNextEntryId) {
+                        const optimisticNextEntry = findEntryById(linkedNextEntryId);
+                        if (optimisticNextEntry) {
+                            optimisticNextEntry.stop = newStartTime;
+                            updateTimeEntryDuration(optimisticNextEntry);
+                        }
+                    }
+
+                    if (linkedPreviousEntryId) {
+                        const optimisticPreviousEntry = findEntryById(linkedPreviousEntryId);
+                        if (optimisticPreviousEntry) {
+                            optimisticPreviousEntry.start = newEndTime;
+                            updateTimeEntryDuration(optimisticPreviousEntry);
+                        }
+                    }
+
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson(`/api/time-entries/${resolveEntryId(entryId)}/edit-linked`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({
                         start_time: newStartTime,
                         end_time: newEndTime,
-                        next_entry_id: nextEntry && nextEntry.stop && startChanged ? nextEntry.id : null,
-                        previous_entry_id: previousEntry && newEndTime && endChanged ? previousEntry.id : null
+                        next_entry_id: linkedNextEntryId ? resolveEntryId(linkedNextEntryId) : null,
+                        previous_entry_id: linkedPreviousEntryId ? resolveEntryId(linkedPreviousEntryId) : null
                     })
-                });
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to save entry');
-                }
+                }, 'Failed to save entry')
+            });
 
-                loadTimeEntries(true);
-            } catch (error) {
-                console.error('Error saving:', error);
-                alert(error.message);
+            if (queued) {
+                cancelEdit(entryId);
             }
         }
 
         async function extendAbove(previousEntryId, nextEntryId, gapStartTime) {
-            try {
-                const response = await fetch(`/api/time-entries/${nextEntryId}`, {
+            const nextEntry = findEntryById(nextEntryId);
+            if (!nextEntry) {
+                alert('Entry not found.');
+                return;
+            }
+
+            bufferMutation({
+                label: 'Extending entry upward',
+                optimistic: () => {
+                    const optimisticNextEntry = findEntryById(nextEntryId);
+                    if (!optimisticNextEntry) {
+                        throw new Error('Entry not found.');
+                    }
+                    optimisticNextEntry.start = gapStartTime;
+                    updateTimeEntryDuration(optimisticNextEntry);
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson(`/api/time-entries/${resolveEntryId(nextEntryId)}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ start_time: gapStartTime })
-                });
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to extend entry');
-                }
-                await loadTimeEntries(true);
-            } catch (error) {
-                console.error('Error extending:', error);
-                alert(`Error extending entry: ${error.message}`);
-            }
+                }, 'Failed to extend entry')
+            });
         }
 
         async function extendBelow(previousEntryId, nextEntryId, gapEndTime) {
-            try {
-                const response = await fetch(`/api/time-entries/${previousEntryId}`, {
+            const previousEntry = findEntryById(previousEntryId);
+            if (!previousEntry) {
+                alert('Entry not found.');
+                return;
+            }
+
+            bufferMutation({
+                label: 'Extending entry downward',
+                optimistic: () => {
+                    const optimisticPreviousEntry = findEntryById(previousEntryId);
+                    if (!optimisticPreviousEntry) {
+                        throw new Error('Entry not found.');
+                    }
+                    optimisticPreviousEntry.stop = gapEndTime;
+                    updateTimeEntryDuration(optimisticPreviousEntry);
+                    return { entriesChanged: true };
+                },
+                send: () => requestJson(`/api/time-entries/${resolveEntryId(previousEntryId)}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ end_time: gapEndTime })
-                });
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to extend entry');
-                }
-                await loadTimeEntries(true);
-            } catch (error) {
-                console.error('Error extending:', error);
-                alert(`Error extending entry: ${error.message}`);
-            }
+                }, 'Failed to extend entry')
+            });
         }
 
         // Minimap interactions
@@ -2169,7 +2582,8 @@
             const modal = document.getElementById('projectModal');
             const grid = document.getElementById('projectModalGrid');
             const isPortrait = window.innerHeight > window.innerWidth;
-            const projectCount = allProjects.length;
+            const modalProjects = allProjects.filter(project => project.visible !== 0);
+            const projectCount = modalProjects.length;
             if (isPortrait) {
                 grid.style.gridTemplateColumns = projectCount > 12 ? 'repeat(3, 1fr)' : 'repeat(3, 1fr)';
                 grid.style.gridTemplateRows = projectCount > 12 ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)';
@@ -2178,7 +2592,7 @@
                 grid.style.gridTemplateRows = 'repeat(3, 1fr)';
             }
             let gridHtml = '';
-            allProjects.forEach(project => {
+            modalProjects.forEach(project => {
                 const color = project.color || '#D15540';
                 gridHtml += `
                     <div class="project-modal-item" onclick="selectProject(${project.id}, '${project.name.replace(/'/g, "\\'")}', '${color}')">
@@ -2245,33 +2659,42 @@
         }
 
         async function createTimeEntry(projectId, startTime, endTime) {
-            const response = await fetch('/api/time-entries', {
+            return requestJson('/api/time-entries', {
                 method: 'POST',
                 headers: getApiHeaders(),
                 body: JSON.stringify({ project_id: projectId, start_time: startTime, end_time: endTime })
-            });
-            if (!response.ok) throw new Error('Failed to create');
-            return await response.json();
+            }, 'Failed to create entry');
         }
 
         async function selectProject(projectId, projectName, projectColor) {
             if (pendingEntryIdForProjectChange) {
-                try {
-                    const response = await fetch(`/api/time-entries/${pendingEntryIdForProjectChange}`, {
+                const targetEntryId = pendingEntryIdForProjectChange;
+                const project = findProjectById(projectId);
+                if (!project) {
+                    alert('Project not found.');
+                    return;
+                }
+
+                const queued = bufferMutation({
+                    label: 'Changing entry project',
+                    optimistic: () => {
+                        const optimisticEntry = findEntryById(targetEntryId);
+                        if (!optimisticEntry) {
+                            throw new Error('Entry not found.');
+                        }
+                        optimisticEntry.project_id = project.id;
+                        optimisticEntry.name = project.name;
+                        return { entriesChanged: true };
+                    },
+                    send: () => requestJson(`/api/time-entries/${resolveEntryId(targetEntryId)}`, {
                         method: 'PUT',
                         headers: getApiHeaders(),
-                        body: JSON.stringify({ project_id: projectId })
-                    });
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.error || 'Failed to change project');
-                    }
+                        body: JSON.stringify({ project_id: resolveProjectId(projectId) })
+                    }, 'Failed to change project')
+                });
+
+                if (queued) {
                     hideProjectModal();
-                    // WebSocket handler will trigger loadTimeEntries
-                } catch (error) {
-                    console.error('Error changing project:', error);
-                    alert(`Error changing project: ${error.message}`);
-                    // Don't hide modal on error so user can try again
                 }
                 return;
             }
@@ -2284,14 +2707,38 @@
                 hideProjectModal();
                 return;
             }
-            try {
-                await createTimeEntry(projectId, adjustedRange.start, adjustedRange.end);
+
+            const project = findProjectById(projectId);
+            if (!project) {
+                alert('Project not found.');
+                return;
+            }
+
+            const tempEntryId = nextTempEntryId--;
+            const queued = bufferMutation({
+                label: 'Creating entry',
+                optimistic: () => {
+                    allEntries.unshift(updateTimeEntryDuration({
+                        id: tempEntryId,
+                        project_id: project.id,
+                        start: adjustedRange.start,
+                        stop: adjustedRange.end,
+                        name: project.name,
+                        pending: true
+                    }));
+                    return { entriesChanged: true };
+                },
+                send: () => createTimeEntry(resolveProjectId(projectId), adjustedRange.start, adjustedRange.end),
+                reconcile: (data) => {
+                    if (data && data.id) {
+                        replaceEntryId(tempEntryId, data);
+                    }
+                    return { entriesChanged: true };
+                }
+            });
+
+            if (queued) {
                 hideProjectModal();
-                // WebSocket handler will trigger loadTimeEntries
-            } catch (error) {
-                console.error('Error creating entry:', error);
-                alert(`Error creating entry: ${error.message}`);
-                // Don't hide modal on error so user can try again
             }
         }
 
@@ -2301,25 +2748,55 @@
         }
 
         async function splitTimeEntry(entryId) {
-            const entry = allEntries.find(e => e.id === entryId);
+            const entry = findEntryById(entryId);
             if (!entry || !entry.stop || entry.duration < 0) { alert('Cannot split a running entry.'); return; }
             const startTime = new Date(entry.start);
             const endTime = new Date(entry.stop);
             const midTime = new Date((startTime.getTime() + endTime.getTime()) / 2);
-            try {
-                await fetch(`/api/time-entries/${entryId}`, {
-                    method: 'PUT',
-                    headers: getApiHeaders(),
-                    body: JSON.stringify({ end_time: midTime.toISOString() })
-                });
-                const project = allProjects.find(p => p.name === entry.name);
-                if (!project) throw new Error('Project not found');
-                await createTimeEntry(project.id, midTime.toISOString(), endTime.toISOString());
-                // WebSocket handler will trigger loadTimeEntries
-            } catch (error) {
-                console.error('Error splitting:', error);
-                alert('Error splitting entry.');
+            const project = findProjectById(entry.project_id);
+            if (!project) {
+                alert('Project not found.');
+                return;
             }
+
+            const tempEntryId = nextTempEntryId--;
+            bufferMutation({
+                label: 'Splitting entry',
+                optimistic: () => {
+                    const optimisticEntry = findEntryById(entryId);
+                    if (!optimisticEntry) {
+                        throw new Error('Entry not found.');
+                    }
+
+                    optimisticEntry.stop = midTime.toISOString();
+                    updateTimeEntryDuration(optimisticEntry);
+                    allEntries.unshift(updateTimeEntryDuration({
+                        id: tempEntryId,
+                        project_id: project.id,
+                        start: midTime.toISOString(),
+                        stop: endTime.toISOString(),
+                        name: project.name,
+                        pending: true
+                    }));
+
+                    return { entriesChanged: true };
+                },
+                send: async () => {
+                    await requestJson(`/api/time-entries/${resolveEntryId(entryId)}`, {
+                        method: 'PUT',
+                        headers: getApiHeaders(),
+                        body: JSON.stringify({ end_time: midTime.toISOString() })
+                    }, 'Failed to split entry');
+
+                    return createTimeEntry(resolveProjectId(project.id), midTime.toISOString(), endTime.toISOString());
+                },
+                reconcile: (data) => {
+                    if (data && data.id) {
+                        replaceEntryId(tempEntryId, data);
+                    }
+                    return { entriesChanged: true };
+                }
+            });
         }
 
         // ============ SETTINGS PANE LOGIC ============
@@ -2330,29 +2807,27 @@
             setCookie('apiToken', apiToken, 365);
             inputEl.type = 'password';
             document.getElementById('saveApiKeyBtn').style.display = 'none';
+            resetBufferedMutations();
             updateWelcomeMessage();
-            projectsRequestSeq++;
-            currentTaskRequestSeq++;
-            timeEntriesRequestSeq++;
-
-            if (!apiToken) {
-                projects = [];
-                allProjects = [];
-                allEntries = [];
-                projectColors = {};
-                currentTaskId = null;
-                currentTaskName = null;
-                currentTaskStartTime = null;
-                generateTaskContainers();
-                document.getElementById('timeEntriesList').innerHTML = '';
-            }
 
             if (previousApiToken !== apiToken || !ws) {
                 refreshWebSocketConnection();
             }
+
+            if (!apiToken) {
+                clearLocalData();
+                applyLocalStateChanges({ projectsChanged: true, entriesChanged: true, preservePage: false });
+                document.getElementById('errorMessage').style.display = 'block';
+                document.getElementById('errorMessage').textContent = 'No API key found. Please add one in Settings.';
+                document.getElementById('errorMessage').className = 'error';
+                loadProjectsList();
+                return;
+            }
+
+            clearLocalData();
+            applyLocalStateChanges({ projectsChanged: true, entriesChanged: true, preservePage: false });
             loadProjectsList();
-            fetchProjects();
-            loadTimeEntries();
+            refreshFromServer(false);
         }
 
         function toggleShowUntracked() {
@@ -2364,62 +2839,57 @@
         async function loadProjectsList() {
             if (!apiToken) {
                 document.getElementById('projectsList').innerHTML = '<p>Please enter an API key first.</p>';
+                document.getElementById('hoursStatus').textContent = '';
                 return;
             }
-            try {
-                const response = await fetch('/api/projects?include_hidden=true', { headers: getApiHeaders() });
-                if (!response.ok) throw new Error('Failed');
-                const projectsList = await response.json();
-                const html = projectsList.map(project => {
-                    const color = project.color || '#D15540';
-                    const isVisible = project.visible !== 0 && project.visible !== null;
-                    const visibilityClass = isVisible ? '' : 'invisible';
-                    return `
-                        <div class="project-item" id="project-item-${project.id}">
-                            <div class="project-item-header">
-                                <div style="display: flex; flex-direction: column; gap: 8px;">
-                                    <span class="settings-project-name-colored" style="background-color: ${color};">${project.name}</span>
-                                    <span style="font-size: 0.95em; opacity: 0.9;">${project.target_hours} hours</span>
-                                </div>
-                                <div class="project-actions">
-                                    <button class="visibility-btn ${visibilityClass}" onclick="toggleVisibility(${project.id}, ${isVisible ? 0 : 1})" title="${isVisible ? 'Hide' : 'Show'}">
-                                        ${isVisible ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path fill-rule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 0 1 0-1.113ZM17.25 12a5.25 5.25 0 1 1-10.5 0 5.25 5.25 0 0 1 10.5 0Z" clip-rule="evenodd"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3.53 2.47a.75.75 0 0 0-1.06 1.06l18 18a.75.75 0 1 0 1.06-1.06l-18-18ZM22.676 12.553a11.249 11.249 0 0 1-2.631 4.31l-3.099-3.099a5.25 5.25 0 0 0-6.71-6.71L7.759 4.577a11.217 11.217 0 0 1 4.242-.827c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113Z"/><path d="M15.75 12c0 .18-.013.357-.037.53l-4.244-4.243A3.75 3.75 0 0 1 15.75 12ZM12.53 15.713l-4.243-4.244a3.75 3.75 0 0 0 4.244 4.243Z"/><path d="M6.75 12c0-.619.107-1.213.304-1.764l-3.1-3.1a11.25 11.25 0 0 0-2.63 4.31c-.12.362-.12.752 0 1.114 1.489 4.467 5.704 7.69 10.675 7.69 1.5 0 2.933-.294 4.242-.827l-2.477-2.477A5.25 5.25 0 0 1 6.75 12Z"/></svg>'}
-                                    </button>
-                                    <button class="settings-edit-btn" data-project-id="${project.id}" data-project-name="${project.name.replace(/"/g, '&quot;')}" data-project-hours="${project.target_hours}" title="Edit">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M21.731 2.269a2.625 2.625 0 0 0-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 0 0 0-3.712ZM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 0 0-1.32 2.214l-.8 2.685a.75.75 0 0 0 .933.933l2.685-.8a5.25 5.25 0 0 0 2.214-1.32l8.4-8.4Z"/><path d="M5.25 5.25a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3V13.5a.75.75 0 0 0-1.5 0v5.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5V8.25a1.5 1.5 0 0 1 1.5-1.5h5.25a.75.75 0 0 0 0-1.5H5.25Z"/></svg>
-                                    </button>
-                                    <button onclick="deleteProject(${project.id})" class="settings-delete-btn" title="Delete">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-.355 5.945a.75.75 0 1 0-1.5.058l.347 9a.75.75 0 1 0 1.499-.058l-.346-9Zm5.48.058a.75.75 0 1 0-1.498-.058l-.347 9a.75.75 0 0 0 1.5.058l.345-9Z" clip-rule="evenodd"/></svg>
-                                    </button>
-                                </div>
+            const projectsList = [...allProjects];
+            const html = projectsList.map(project => {
+                const color = project.color || '#D15540';
+                const isVisible = project.visible !== 0 && project.visible !== null;
+                const visibilityClass = isVisible ? '' : 'invisible';
+                return `
+                    <div class="project-item" id="project-item-${project.id}">
+                        <div class="project-item-header">
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                <span class="settings-project-name-colored" style="background-color: ${color};">${project.name}</span>
+                                <span style="font-size: 0.95em; opacity: 0.9;">${project.target_hours} hours</span>
+                            </div>
+                            <div class="project-actions">
+                                <button class="visibility-btn ${visibilityClass}" onclick="toggleVisibility(${project.id}, ${isVisible ? 0 : 1})" title="${isVisible ? 'Hide' : 'Show'}">
+                                    ${isVisible ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path fill-rule="evenodd" d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 0 1 0-1.113ZM17.25 12a5.25 5.25 0 1 1-10.5 0 5.25 5.25 0 0 1 10.5 0Z" clip-rule="evenodd"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3.53 2.47a.75.75 0 0 0-1.06 1.06l18 18a.75.75 0 1 0 1.06-1.06l-18-18ZM22.676 12.553a11.249 11.249 0 0 1-2.631 4.31l-3.099-3.099a5.25 5.25 0 0 0-6.71-6.71L7.759 4.577a11.217 11.217 0 0 1 4.242-.827c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113Z"/><path d="M15.75 12c0 .18-.013.357-.037.53l-4.244-4.243A3.75 3.75 0 0 1 15.75 12ZM12.53 15.713l-4.243-4.244a3.75 3.75 0 0 0 4.244 4.243Z"/><path d="M6.75 12c0-.619.107-1.213.304-1.764l-3.1-3.1a11.25 11.25 0 0 0-2.63 4.31c-.12.362-.12.752 0 1.114 1.489 4.467 5.704 7.69 10.675 7.69 1.5 0 2.933-.294 4.242-.827l-2.477-2.477A5.25 5.25 0 0 1 6.75 12Z"/></svg>'}
+                                </button>
+                                <button class="settings-edit-btn" data-project-id="${project.id}" data-project-name="${project.name.replace(/"/g, '&quot;')}" data-project-hours="${project.target_hours}" title="Edit">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M21.731 2.269a2.625 2.625 0 0 0-3.712 0l-1.157 1.157 3.712 3.712 1.157-1.157a2.625 2.625 0 0 0 0-3.712ZM19.513 8.199l-3.712-3.712-8.4 8.4a5.25 5.25 0 0 0-1.32 2.214l-.8 2.685a.75.75 0 0 0 .933.933l2.685-.8a5.25 5.25 0 0 0 2.214-1.32l8.4-8.4Z"/><path d="M5.25 5.25a3 3 0 0 0-3 3v10.5a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3V13.5a.75.75 0 0 0-1.5 0v5.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5V8.25a1.5 1.5 0 0 1 1.5-1.5h5.25a.75.75 0 0 0 0-1.5H5.25Z"/></svg>
+                                </button>
+                                <button onclick="deleteProject(${project.id})" class="settings-delete-btn" title="Delete">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-.355 5.945a.75.75 0 1 0-1.5.058l.347 9a.75.75 0 1 0 1.499-.058l-.346-9Zm5.48.058a.75.75 0 1 0-1.498-.058l-.347 9a.75.75 0 0 0 1.5.058l.345-9Z" clip-rule="evenodd"/></svg>
+                                </button>
                             </div>
                         </div>
-                    `;
-                }).join('');
-                document.getElementById('projectsList').innerHTML = html || '<p>No projects yet. Add one below.</p>';
-                document.querySelectorAll('.settings-edit-btn').forEach(btn => {
-                    btn.addEventListener('click', function() {
-                        const projectId = parseInt(this.getAttribute('data-project-id'));
-                        const projectName = this.getAttribute('data-project-name');
-                        const projectHours = parseFloat(this.getAttribute('data-project-hours'));
-                        editProjectSettings(projectId, projectName, projectHours);
-                    });
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('projectsList').innerHTML = html || '<p>No projects yet. Add one below.</p>';
+            document.querySelectorAll('.settings-edit-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const projectId = parseInt(this.getAttribute('data-project-id'), 10);
+                    const projectName = this.getAttribute('data-project-name');
+                    const projectHours = parseFloat(this.getAttribute('data-project-hours'));
+                    editProjectSettings(projectId, projectName, projectHours);
                 });
-                // Calculate and display hours status
-                const totalHours = projectsList.reduce((sum, p) => sum + (p.target_hours || 0), 0);
-                const hoursStatusEl = document.getElementById('hoursStatus');
-                if (totalHours === 168) {
-                    hoursStatusEl.textContent = 'All 168 hours assigned.';
-                } else if (totalHours > 168) {
-                    const diff = totalHours - 168;
-                    hoursStatusEl.textContent = `${diff} ${diff === 1 ? 'hour' : 'hours'} over 168.`;
-                } else {
-                    const diff = 168 - totalHours;
-                    hoursStatusEl.textContent = `${diff} ${diff === 1 ? 'hour' : 'hours'} under 168.`;
-                }
-            } catch (error) {
-                console.error('Error loading projects:', error);
-                document.getElementById('projectsList').innerHTML = '<p style="color: red;">Error loading projects.</p>';
+            });
+
+            const totalHours = projectsList.reduce((sum, project) => sum + (project.target_hours || 0), 0);
+            const hoursStatusEl = document.getElementById('hoursStatus');
+            if (totalHours === 168) {
+                hoursStatusEl.textContent = 'All 168 hours assigned.';
+            } else if (totalHours > 168) {
+                const diff = totalHours - 168;
+                hoursStatusEl.textContent = `${diff} ${diff === 1 ? 'hour' : 'hours'} over 168.`;
+            } else {
+                const diff = 168 - totalHours;
+                hoursStatusEl.textContent = `${diff} ${diff === 1 ? 'hour' : 'hours'} under 168.`;
             }
         }
 
@@ -2428,20 +2898,39 @@
             const hours = parseFloat(document.getElementById('newProjectHours').value);
             if (!name || isNaN(hours) || hours <= 0) { alert('Please enter a valid project name and target hours.'); return; }
             if (!apiToken) { alert('Please enter an API key first.'); return; }
-            try {
-                const response = await fetch('/api/projects', {
+            const tempProjectId = nextTempProjectId--;
+            const localColor = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
+            const queued = bufferMutation({
+                label: 'Adding project',
+                optimistic: () => {
+                    allProjects.push(normalizeProject({
+                        id: tempProjectId,
+                        name,
+                        target_hours: hours,
+                        color: localColor,
+                        visible: 1,
+                        pending: true
+                    }));
+                    document.getElementById('newProjectName').value = '';
+                    document.getElementById('newProjectHours').value = '';
+                    return { projectsChanged: true, entriesChanged: true };
+                },
+                send: () => requestJson('/api/projects', {
                     method: 'POST',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ name, target_hours: hours })
-                });
-                if (!response.ok) throw new Error('Failed');
-                document.getElementById('newProjectName').value = '';
-                document.getElementById('newProjectHours').value = '';
-                loadProjectsList();
-                fetchProjects();
-            } catch (error) {
-                console.error('Error adding project:', error);
-                alert('Error adding project.');
+                }, 'Failed to add project'),
+                reconcile: (data) => {
+                    if (data && data.id) {
+                        replaceProjectId(tempProjectId, data);
+                    }
+                    return { projectsChanged: true, entriesChanged: true };
+                }
+            });
+
+            if (!queued) {
+                document.getElementById('newProjectName').value = name;
+                document.getElementById('newProjectHours').value = hours;
             }
         }
 
@@ -2475,79 +2964,103 @@
             const name = nameInput.value.trim();
             const hours = parseFloat(hoursInput.value);
             if (!name || isNaN(hours) || hours <= 0) { alert('Please enter a valid project name and target hours.'); return; }
-            try {
-                const response = await fetch(`/api/projects/${projectId}`, {
+            const project = findProjectById(projectId);
+            if (!project) {
+                alert('Project not found.');
+                return;
+            }
+
+            const queued = bufferMutation({
+                label: 'Updating project',
+                optimistic: () => {
+                    const optimisticProject = findProjectById(projectId);
+                    if (!optimisticProject) {
+                        throw new Error('Project not found.');
+                    }
+
+                    optimisticProject.name = name;
+                    optimisticProject.target_hours = hours;
+                    return { projectsChanged: true, entriesChanged: true };
+                },
+                send: () => requestJson(`/api/projects/${resolveProjectId(projectId)}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ name, target_hours: hours })
-                });
-                if (!response.ok) throw new Error('Failed');
-                loadProjectsList();
-                fetchProjects();
-            } catch (error) {
-                console.error('Error updating project:', error);
-                alert('Error updating project.');
+                    body: JSON.stringify({ name, target_hours: hours, visible: project.visible })
+                }, 'Failed to update project')
+            });
+
+            if (queued) {
+                cancelEditSettings(projectId);
             }
         }
 
         async function toggleVisibility(projectId, newVisibility) {
             if (!apiToken) { alert('Please enter an API key first.'); return; }
-            try {
-                const getResponse = await fetch('/api/projects?include_hidden=true', { headers: getApiHeaders() });
-                if (!getResponse.ok) {
-                    const errorData = await getResponse.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to fetch projects');
-                }
-                const projects = await getResponse.json();
-                const project = projects.find(p => p.id === projectId);
-                if (!project) { alert('Project not found.'); return; }
-                const putResponse = await fetch(`/api/projects/${projectId}`, {
+            const project = findProjectById(projectId);
+            if (!project) { alert('Project not found.'); return; }
+
+            bufferMutation({
+                label: 'Updating project visibility',
+                optimistic: () => {
+                    const optimisticProject = findProjectById(projectId);
+                    if (!optimisticProject) {
+                        throw new Error('Project not found.');
+                    }
+                    optimisticProject.visible = newVisibility ? 1 : 0;
+                    return { projectsChanged: true, entriesChanged: true };
+                },
+                send: () => requestJson(`/api/projects/${resolveProjectId(projectId)}`, {
                     method: 'PUT',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ name: project.name, target_hours: project.target_hours, visible: newVisibility })
-                });
-                if (!putResponse.ok) {
-                    const errorData = await putResponse.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to update visibility');
-                }
-                loadProjectsList();
-                fetchProjects();
-            } catch (error) {
-                console.error('Error toggling visibility:', error);
-                alert(`Error toggling visibility: ${error.message}`);
-            }
+                    body: JSON.stringify({
+                        name: project.name,
+                        target_hours: project.target_hours,
+                        visible: newVisibility
+                    })
+                }, 'Failed to update visibility')
+            });
         }
 
         async function deleteProject(projectId) {
             if (!confirm('Are you sure you want to delete this project?')) return;
-            try {
-                const response = await fetch(`/api/projects/${projectId}`, { method: 'DELETE', headers: getApiHeaders() });
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to delete project');
-                }
-                loadProjectsList();
-                fetchProjects();
-            } catch (error) {
-                console.error('Error deleting project:', error);
-                alert(`Error deleting project: ${error.message}`);
-            }
+            bufferMutation({
+                label: 'Deleting project',
+                optimistic: () => {
+                    const resolvedProjectId = resolveProjectId(projectId);
+                    allProjects = allProjects.filter(project => project.id !== projectId && project.id !== resolvedProjectId);
+                    allEntries = allEntries.filter(entry => entry.project_id !== projectId && entry.project_id !== resolvedProjectId);
+                    return { projectsChanged: true, entriesChanged: true };
+                },
+                send: () => requestJson(`/api/projects/${resolveProjectId(projectId)}`, {
+                    method: 'DELETE',
+                    headers: getApiHeaders()
+                }, 'Failed to delete project')
+            });
         }
 
         async function randomizeColors() {
             if (!apiToken) { alert('Please enter an API key first.'); return; }
-            try {
-                const response = await fetch('/api/projects/randomize-colors', { method: 'POST', headers: getApiHeaders() });
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Failed to randomize colors');
+            const shuffledColors = [...PROJECT_COLORS].sort(() => Math.random() - 0.5);
+            bufferMutation({
+                label: 'Randomizing colors',
+                optimistic: () => {
+                    allProjects = allProjects.map((project, index) => ({
+                        ...project,
+                        color: shuffledColors[index % shuffledColors.length]
+                    }));
+                    return { projectsChanged: true, entriesChanged: true };
+                },
+                send: () => requestJson('/api/projects/randomize-colors', {
+                    method: 'POST',
+                    headers: getApiHeaders()
+                }, 'Failed to randomize colors'),
+                reconcile: (data) => {
+                    if (data && Array.isArray(data.projects)) {
+                        allProjects = data.projects.map(normalizeProject);
+                    }
+                    return { projectsChanged: true, entriesChanged: true };
                 }
-                loadProjectsList();
-                fetchProjects();
-            } catch (error) {
-                console.error('Error randomizing colors:', error);
-                alert(`Error randomizing colors: ${error.message}`);
-            }
+            });
         }
 
         // ============ WEBSOCKET ============
@@ -2590,8 +3103,7 @@
             socket.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-                    wsMessageQueue.push(message);
-                    processWebSocketQueue();
+                    handleWebSocketMessage(message);
                 } catch (error) {
                     console.error('WebSocket parse error:', error);
                 }
@@ -2617,58 +3129,12 @@
         }
 
         async function processWebSocketQueue() {
-            if (wsProcessingQueue) return;
-            wsProcessingQueue = true;
-            try {
-                while (wsMessageQueue.length > 0) {
-                    const message = wsMessageQueue.shift();
-                    await handleWebSocketMessage(message);
-                }
-            } finally {
-                wsProcessingQueue = false;
-            }
+            queueServerRefresh(true);
         }
 
         async function handleWebSocketMessage(message) {
             console.log('WebSocket:', message.type);
-            switch (message.type) {
-                case 'project_created':
-                case 'project_updated':
-                case 'project_deleted':
-                case 'projects_updated':
-                    await fetchProjects();
-                    await loadProjectsList();
-                    await loadTimeEntries(true);
-                    break;
-                case 'time_entry_started':
-                    currentTaskId = message.data.id;
-                    currentTaskName = message.data.name;
-                    currentTaskStartTime = message.data.start ? new Date(message.data.start) : new Date();
-                    if (!(message.data.name in cachedProjectTotals)) cachedProjectTotals[message.data.name] = 0;
-                    renderTotalsFromCache();
-                    updateButtonStyles(message.data.name);
-                    updateDocumentTitle();
-                    await loadTimeEntries(true);
-                    break;
-                case 'time_entry_stopped':
-                    if (currentTaskId === message.data.id) {
-                        currentTaskId = null;
-                        currentTaskName = null;
-                        currentTaskStartTime = null;
-                        updateButtonStyles(null);
-                        updateDocumentTitle();
-                    }
-                    await updateTotals();
-                    await loadTimeEntries(true);
-                    break;
-                case 'time_entry_created':
-                case 'time_entry_updated':
-                case 'time_entry_deleted':
-                    await updateTotals();
-                    await getCurrentTask();
-                    await loadTimeEntries(true);
-                    break;
-            }
+            queueServerRefresh(true);
         }
 
         // ============ KEYBOARD NAVIGATION ============
@@ -2731,18 +3197,15 @@
         // Visibility change
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
-                getCurrentTask();
-                updateTotals();
-                loadTimeEntries(true);
+                queueServerRefresh(true);
             }
         });
 
         // Initial load
+        loadProjectsList();
+        refreshFromServer(false);
+        updateTimeAdjustmentButtons();
         if (apiToken) {
-            fetchProjects().then(() => {
-                loadTimeEntries();
-            });
-            loadProjectsList();
             connectWebSocket();
         }
     </script>
