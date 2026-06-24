@@ -973,9 +973,18 @@
                 ...project,
                 id: Number(project.id),
                 target_hours: Number(project.target_hours),
+                all_time_hours: Number(project.all_time_hours || 0),
+                typical_hours: Number(project.typical_hours || 0),
                 color: project.color || '#D15540',
                 visible: project.visible === 0 ? 0 : 1
             };
+        }
+
+        function formatSettingsHours(hours) {
+            const value = Number(hours);
+            if (!Number.isFinite(value)) return '0';
+            const rounded = Math.round(value * 10) / 10;
+            return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
         }
 
         function normalizeEntry(entry) {
@@ -2847,12 +2856,15 @@
                 const color = project.color || '#D15540';
                 const isVisible = project.visible !== 0 && project.visible !== null;
                 const visibilityClass = isVisible ? '' : 'invisible';
+                const targetHours = formatSettingsHours(project.target_hours);
+                const typicalHours = formatSettingsHours(project.typical_hours);
                 return `
                     <div class="project-item" id="project-item-${project.id}">
                         <div class="project-item-header">
                             <div style="display: flex; flex-direction: column; gap: 8px;">
                                 <span class="settings-project-name-colored" style="background-color: ${color};">${project.name}</span>
-                                <span style="font-size: 0.95em; opacity: 0.9;">${project.target_hours} hours</span>
+                                <span style="font-size: 0.95em; opacity: 0.9;">${targetHours} hours target</span>
+                                <span style="font-size: 0.95em; opacity: 0.75;">${typicalHours} hours typical</span>
                             </div>
                             <div class="project-actions">
                                 <button class="visibility-btn ${visibilityClass}" onclick="toggleVisibility(${project.id}, ${isVisible ? 0 : 1})" title="${isVisible ? 'Hide' : 'Show'}">

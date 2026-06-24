@@ -297,13 +297,47 @@ app.get('/settings', (req, res) => {
 app.get('/api/projects', requireApiKey, (req, res) => {
     try {
         const includeHidden = req.query.include_hidden === 'true';
-        let query = 'SELECT id, name, target_hours, color, visible FROM projects WHERE api_key_id = ?';
+        const nowIso = new Date().toISOString();
+        let query = `
+            WITH entry_durations AS (
+                SELECT
+                    project_id,
+                    (julianday(COALESCE(end_time, ?)) - julianday(start_time)) * 24.0 AS hours
+                FROM time_entries
+                WHERE api_key_id = ?
+                  AND julianday(COALESCE(end_time, ?)) > julianday(start_time)
+            ),
+            project_totals AS (
+                SELECT project_id, SUM(hours) AS all_time_hours
+                FROM entry_durations
+                GROUP BY project_id
+            ),
+            account_total AS (
+                SELECT SUM(all_time_hours) AS all_time_hours
+                FROM project_totals
+            )
+            SELECT
+                p.id,
+                p.name,
+                p.target_hours,
+                p.color,
+                p.visible,
+                COALESCE(pt.all_time_hours, 0) AS all_time_hours,
+                CASE
+                    WHEN at.all_time_hours > 0 THEN COALESCE(pt.all_time_hours, 0) * 168.0 / at.all_time_hours
+                    ELSE 0
+                END AS typical_hours
+            FROM projects p
+            LEFT JOIN project_totals pt ON pt.project_id = p.id
+            CROSS JOIN account_total at
+            WHERE p.api_key_id = ?
+        `;
         if (!includeHidden) {
-            query += ' AND (visible IS NULL OR visible = 1)';
+            query += ' AND (p.visible IS NULL OR p.visible = 1)';
         }
-        query += ' ORDER BY target_hours DESC';
+        query += ' ORDER BY p.target_hours DESC';
         const stmt = db.prepare(query);
-        const projects = stmt.all(req.apiKeyId);
+        const projects = stmt.all(nowIso, req.apiKeyId, nowIso, req.apiKeyId);
         res.json(projects);
     } catch (error) {
         console.error('Error fetching projects:', error);
