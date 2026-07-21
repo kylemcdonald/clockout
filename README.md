@@ -25,6 +25,13 @@ This application uses a SQLite database to store all data locally, with no exter
   - Time entry tracking
   - Admin interface for API key management
 
+### Production proxy
+
+The public site is served by Caddy, which terminates HTTPS and reverse proxies
+requests (including WebSockets) to this server on `127.0.0.1:3003`. The
+deployment source is [`deploy/clockout.caddy`](deploy/clockout.caddy); the
+server installs that fragment under `/etc/caddy/sites/`.
+
 ## Setup
 
 1. Install dependencies:
@@ -136,4 +143,5 @@ ADMIN_PASSWORD=your-secure-password npm start
 ## Environment Variables
 
 - `PORT` - Server port (default: 3000)
+- `HOST` - Bind address (default: `127.0.0.1` in production)
 - `ADMIN_PASSWORD` - Password for admin interface (default: `admin123`)

@@ -14,6 +14,7 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
+const host = process.env.HOST || '127.0.0.1';
 const server = createServer(app);
 
 // WebSocket server setup
@@ -1024,6 +1025,6 @@ app.get('/api', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-server.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+server.listen(port, host, () => {
+    console.log(`Server running at http://${host}:${port}`);
 });

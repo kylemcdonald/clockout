@@ -1,0 +1,9 @@
+# Installed on the host as /etc/caddy/sites/clockout.caddy.
+# Caddy manages HTTPS and forwards WebSocket upgrades automatically.
+clockout.iyoiyo.studio {
+    reverse_proxy 127.0.0.1:3003 {
+        # Preserve the legacy header while Caddy supplies X-Forwarded-* headers.
+        header_up X-NginX-Proxy true
+        header_up X-Real-IP {remote_host}
+    }
+}
